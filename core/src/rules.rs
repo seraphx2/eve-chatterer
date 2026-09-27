@@ -1,10 +1,14 @@
 //! Deciding whether a chat line deserves an alert for one pilot.
+//!
+//! Per-channel behavior (mute, mentions only, everything) is a `Mode` chosen by
+//! the settings layers, not a list here; this module holds the content rules
+//! and applies a mode to them.
 
+use crate::prefs::Mode;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
-/// User-editable rule settings. Matching is case-insensitive.
+/// The content rules, after the settings layers have been merged. Matching is case-insensitive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RuleSet {
@@ -17,10 +21,8 @@ pub struct RuleSet {
     /// Senders that are never alerted on, chiefly the login message-of-the-day.
     pub ignore_system: bool,
     pub system_senders: Vec<String>,
-    pub ignore_channels: Vec<String>,
     pub ignore_senders: Vec<String>,
-    /// Alert on every line in these channels / from these senders.
-    pub always_channels: Vec<String>,
+    /// Alert on every line from these senders.
     pub always_senders: Vec<String>,
 }
 
@@ -33,9 +35,7 @@ impl Default for RuleSet {
             ignore_own_messages: true,
             ignore_system: true,
             system_senders: vec!["EVE System".to_string()],
-            ignore_channels: vec![],
             ignore_senders: vec![],
-            always_channels: vec![],
             always_senders: vec![],
         }
     }
@@ -43,6 +43,7 @@ impl Default for RuleSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
+    /// Every line alerts in this channel (mode `Everything`).
     AlwaysChannel(String),
     AlwaysSender(String),
     OwnName,
@@ -62,9 +63,7 @@ pub struct CompiledRules {
     ignore_own: bool,
     ignore_system: bool,
     system_senders: Vec<String>,
-    ignore_channels: Vec<String>,
     ignore_senders: Vec<String>,
-    always_channels: Vec<String>,
     always_senders: Vec<String>,
     keywords: Vec<(String, String)>,
     regexes: Vec<(String, Regex)>,
@@ -87,9 +86,7 @@ impl CompiledRules {
             ignore_own: r.ignore_own_messages,
             ignore_system: r.ignore_system,
             system_senders: lower(&r.system_senders),
-            ignore_channels: lower(&r.ignore_channels),
             ignore_senders: lower(&r.ignore_senders),
-            always_channels: lower(&r.always_channels),
             always_senders: lower(&r.always_senders),
             keywords: r
                 .keywords
@@ -101,33 +98,34 @@ impl CompiledRules {
         })
     }
 
-    /// `None` means no alert. Ignores win over everything, then "always"
-    /// rules, then the content rules.
-    pub fn evaluate(&self, c: &LineCtx) -> Option<Reason> {
-        let channel = c.channel_name.trim().to_lowercase();
+    /// Lines that never alert whatever the mode: the pilot's own messages,
+    /// system messages (the login MOTD) and ignored senders.
+    fn ignored(&self, c: &LineCtx) -> bool {
         let sender = c.sender.trim().to_lowercase();
-        if self.ignore_channels.contains(&channel) {
+        (self.ignore_own && !c.pilot_name.trim().is_empty() && sender == c.pilot_name.trim().to_lowercase())
+            || (self.ignore_system && self.system_senders.contains(&sender))
+            || self.ignore_senders.contains(&sender)
+    }
+
+    fn mentions_own_name(&self, c: &LineCtx) -> bool {
+        let name = c.pilot_name.trim().to_lowercase();
+        !name.is_empty() && c.text.to_lowercase().contains(&name)
+    }
+
+    /// The content rules: ignores win, then "always" senders, then own name,
+    /// keywords and regexes.
+    pub fn evaluate(&self, c: &LineCtx) -> Option<Reason> {
+        if self.ignored(c) {
             return None;
         }
-        if self.ignore_own && !c.pilot_name.is_empty() && sender == c.pilot_name.trim().to_lowercase() {
-            return None;
-        }
-        if self.ignore_system && self.system_senders.contains(&sender) {
-            return None;
-        }
-        if self.ignore_senders.contains(&sender) {
-            return None;
-        }
+        let sender = c.sender.trim().to_lowercase();
         if self.always_senders.contains(&sender) {
             return Some(Reason::AlwaysSender(c.sender.trim().to_string()));
         }
-        if self.always_channels.contains(&channel) {
-            return Some(Reason::AlwaysChannel(c.channel_name.trim().to_string()));
-        }
-        let text = c.text.to_lowercase();
-        if self.own_name && !c.pilot_name.trim().is_empty() && text.contains(&c.pilot_name.trim().to_lowercase()) {
+        if self.own_name && self.mentions_own_name(c) {
             return Some(Reason::OwnName);
         }
+        let text = c.text.to_lowercase();
         if let Some((k, _)) = self.keywords.iter().find(|(_, lk)| text.contains(lk)) {
             return Some(Reason::Keyword(k.clone()));
         }
@@ -136,26 +134,17 @@ impl CompiledRules {
         }
         None
     }
-}
 
-/// A default rule set plus per-pilot overrides (keyed by character id).
-pub struct RuleBook {
-    default: CompiledRules,
-    per_pilot: HashMap<String, CompiledRules>,
-}
-
-impl RuleBook {
-    pub fn new(default: &RuleSet) -> Result<RuleBook, regex::Error> {
-        Ok(RuleBook { default: CompiledRules::compile(default)?, per_pilot: HashMap::new() })
-    }
-
-    pub fn set_pilot(&mut self, pilot_id: &str, rules: &RuleSet) -> Result<(), regex::Error> {
-        self.per_pilot.insert(pilot_id.to_string(), CompiledRules::compile(rules)?);
-        Ok(())
-    }
-
-    pub fn for_pilot(&self, pilot_id: Option<&str>) -> &CompiledRules {
-        pilot_id.and_then(|id| self.per_pilot.get(id)).unwrap_or(&self.default)
+    /// Applies a channel `Mode` on top of the content rules.
+    pub fn evaluate_mode(&self, c: &LineCtx, mode: Mode) -> Option<Reason> {
+        match mode {
+            Mode::Mute => None,
+            Mode::Matching => self.evaluate(c),
+            Mode::MentionsOnly => (!self.ignored(c) && self.mentions_own_name(c)).then_some(Reason::OwnName),
+            Mode::Everything => {
+                (!self.ignored(c)).then(|| Reason::AlwaysChannel(c.channel_name.trim().to_string()))
+            }
+        }
     }
 }
 
@@ -163,47 +152,44 @@ impl RuleBook {
 mod tests {
     use super::*;
 
-    fn eval(rules: RuleSet, pilot: &str, channel: &str, sender: &str, text: &str) -> Option<Reason> {
-        CompiledRules::compile(&rules).unwrap().evaluate(&LineCtx { pilot_name: pilot, channel_name: channel, sender, text })
+    fn ctx<'a>(pilot: &'a str, channel: &'a str, sender: &'a str, text: &'a str) -> LineCtx<'a> {
+        LineCtx { pilot_name: pilot, channel_name: channel, sender, text }
+    }
+
+    fn eval(rules: RuleSet, pilot: &str, sender: &str, text: &str) -> Option<Reason> {
+        CompiledRules::compile(&rules).unwrap().evaluate(&ctx(pilot, "Local", sender, text))
     }
 
     #[test]
     fn own_name_matches_case_insensitively_and_ignores_own_messages() {
         let d = RuleSet::default;
-        assert_eq!(eval(d(), "Jarna", "Local", "Bob", "hey JARNA are you there"), Some(Reason::OwnName));
-        assert_eq!(eval(d(), "Jarna", "Local", "Bob", "nothing to see"), None);
-        assert_eq!(eval(d(), "Jarna", "Local", "Jarna", "I said my own name Jarna"), None);
-        assert_eq!(eval(RuleSet { ignore_own_messages: false, ..d() }, "Jarna", "Local", "Jarna", "Jarna"), Some(Reason::OwnName));
+        assert_eq!(eval(d(), "Jarna", "Bob", "hey JARNA are you there"), Some(Reason::OwnName));
+        assert_eq!(eval(d(), "Jarna", "Bob", "nothing to see"), None);
+        assert_eq!(eval(d(), "Jarna", "Jarna", "I said my own name Jarna"), None);
+        assert_eq!(eval(RuleSet { ignore_own_messages: false, ..d() }, "Jarna", "Jarna", "Jarna"), Some(Reason::OwnName));
     }
 
     #[test]
     fn login_motd_from_eve_system_never_alerts() {
         let text = "Channel MOTD: contacts: Jarna, Psianna";
-        assert_eq!(eval(RuleSet::default(), "Jarna", "Corp", "EVE System", text), None);
-        assert_eq!(eval(RuleSet { ignore_system: false, ..RuleSet::default() }, "Jarna", "Corp", "EVE System", text), Some(Reason::OwnName));
+        assert_eq!(eval(RuleSet::default(), "Jarna", "EVE System", text), None);
+        assert_eq!(eval(RuleSet { ignore_system: false, ..RuleSet::default() }, "Jarna", "EVE System", text), Some(Reason::OwnName));
     }
 
     #[test]
     fn keywords_and_regexes() {
         let r = RuleSet { keywords: vec!["Jita".into(), " ".into()], regexes: vec![r"\bgank(ed|ing)?\b".into()], ..RuleSet::default() };
-        assert_eq!(eval(r.clone(), "Jarna", "Local", "X", "going to jita 4-4"), Some(Reason::Keyword("Jita".into())));
-        assert_eq!(eval(r.clone(), "Jarna", "Local", "X", "we got ganked"), Some(Reason::Regex(r"\bgank(ed|ing)?\b".into())));
-        assert_eq!(eval(r, "Jarna", "Local", "X", "gankster"), None);
+        assert_eq!(eval(r.clone(), "Jarna", "X", "going to jita 4-4"), Some(Reason::Keyword("Jita".into())));
+        assert_eq!(eval(r.clone(), "Jarna", "X", "we got ganked"), Some(Reason::Regex(r"\bgank(ed|ing)?\b".into())));
+        assert_eq!(eval(r, "Jarna", "X", "gankster"), None);
     }
 
     #[test]
-    fn ignore_beats_always_beats_content() {
-        let r = RuleSet {
-            always_channels: vec!["Fleet".into()],
-            ignore_senders: vec!["Spammer".into()],
-            always_senders: vec!["Boss".into()],
-            ignore_channels: vec!["Sales".into()],
-            ..RuleSet::default()
-        };
-        assert_eq!(eval(r.clone(), "Jarna", "Fleet", "Anyone", "hello"), Some(Reason::AlwaysChannel("Fleet".into())));
-        assert_eq!(eval(r.clone(), "Jarna", "Fleet", "Spammer", "hello Jarna"), None);
-        assert_eq!(eval(r.clone(), "Jarna", "Local", "Boss", "hi"), Some(Reason::AlwaysSender("Boss".into())));
-        assert_eq!(eval(r, "Jarna", "Sales", "Boss", "Jarna"), None);
+    fn ignored_senders_beat_always_senders_beat_content() {
+        let r = RuleSet { ignore_senders: vec!["Spammer".into()], always_senders: vec!["Boss".into()], ..RuleSet::default() };
+        assert_eq!(eval(r.clone(), "Jarna", "Spammer", "hello Jarna"), None);
+        assert_eq!(eval(r.clone(), "Jarna", "Boss", "hi"), Some(Reason::AlwaysSender("Boss".into())));
+        assert_eq!(eval(r, "Jarna", "Bob", "Jarna?"), Some(Reason::OwnName));
     }
 
     #[test]
@@ -212,19 +198,36 @@ mod tests {
     }
 
     #[test]
-    fn per_pilot_overrides_fall_back_to_the_default() {
-        let mut book = RuleBook::new(&RuleSet::default()).unwrap();
-        book.set_pilot("2", &RuleSet { own_name: false, keywords: vec!["fleet".into()], ..RuleSet::default() }).unwrap();
-        let ctx = LineCtx { pilot_name: "Psianna", channel_name: "Local", sender: "X", text: "Psianna fleet up" };
-        assert_eq!(book.for_pilot(Some("2")).evaluate(&ctx), Some(Reason::Keyword("fleet".into())));
-        assert_eq!(book.for_pilot(Some("1")).evaluate(&ctx), Some(Reason::OwnName));
-        assert_eq!(book.for_pilot(None).evaluate(&ctx), Some(Reason::OwnName));
-    }
-
-    #[test]
     fn rule_sets_deserialize_with_missing_fields() {
         let r: RuleSet = serde_json::from_str(r#"{"keywords":["a"]}"#).unwrap();
         assert!(r.own_name && r.ignore_system);
         assert_eq!(r.keywords, ["a"]);
+    }
+
+    fn mode(rules: RuleSet, m: Mode, sender: &str, text: &str) -> Option<Reason> {
+        CompiledRules::compile(&rules).unwrap().evaluate_mode(&ctx("Jarna", "Fleet", sender, text), m)
+    }
+
+    #[test]
+    fn the_modes_narrow_or_widen_what_alerts() {
+        let r = || RuleSet { keywords: vec!["jita".into()], ..RuleSet::default() };
+        // Mute: nothing, not even a mention.
+        assert_eq!(mode(r(), Mode::Mute, "Bob", "Jarna!"), None);
+        // MentionsOnly: the keyword no longer counts, a mention still does.
+        assert_eq!(mode(r(), Mode::MentionsOnly, "Bob", "selling in jita"), None);
+        assert_eq!(mode(r(), Mode::MentionsOnly, "Bob", "Jarna, jita?"), Some(Reason::OwnName));
+        // Matching: the normal rules.
+        assert_eq!(mode(r(), Mode::Matching, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
+        // Everything: every line, labelled with the channel.
+        assert_eq!(mode(r(), Mode::Everything, "Bob", "hello"), Some(Reason::AlwaysChannel("Fleet".into())));
+    }
+
+    #[test]
+    fn everything_still_skips_own_system_and_ignored_lines() {
+        let r = || RuleSet { ignore_senders: vec!["Spammer".into()], ..RuleSet::default() };
+        assert_eq!(mode(r(), Mode::Everything, "Jarna", "my own line"), None);
+        assert_eq!(mode(r(), Mode::Everything, "EVE System", "MOTD"), None);
+        assert_eq!(mode(r(), Mode::Everything, "Spammer", "buy stuff"), None);
+        assert_eq!(mode(r(), Mode::MentionsOnly, "Spammer", "Jarna"), None);
     }
 }

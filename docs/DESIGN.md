@@ -98,25 +98,23 @@ Shared details: the **lifetime meter** is three segments that drain in turn; the
 
 Style choice: `router::StyleMap` maps the reason to a style (mention Beacon, keyword/regex Panel, always Strip) with a per-pilot override; both are settings. Burst folding (a fast run of alerts collapses into a Strip stack with a count badge) needs memory of recent alerts, so it lives in the overlay manager, not the pure router. A Beacon takes the top of the stack with Strips beneath; lifetime can differ per style (Beacon longest).
 
-## Granular settings (requirement, model proposed, not yet built)
+## Granular settings (implemented in `core/src/settings.rs`)
 
-Owner requirement: decisions per channel and per character, because different characters have different jobs and their tolerance for "annoyance" differs. Today the core has one default `RuleSet`, per-pilot overrides in `RuleBook`, and per-pilot delivery/suppression/style in `RouterConfig`; these are meant to become one layered tree.
+Owner requirement: decisions per channel and per character, because different characters have different jobs and their tolerance for "annoyance" differs.
 
-Channels come in kinds, classified from the header channel id (`core/src/channel.rs`, FINDINGS #3): **fixed** (Local, Corp), **situational** (Alliance while in an alliance, Fleet while in a fleet), **public** (CCP's and player-made, stable id), and **private messages**. Fleet and private ids are new every time, so they can only be configured as a kind ("all fleets", "all private messages"); Local, Corp and public channels have stable ids and public ones can also be configured individually by id (shown by name).
+Channels come in kinds, classified from the header channel id (`core/src/channel.rs`, FINDINGS #3): **fixed** (Local, Corp), **situational** (Alliance while in an alliance, Fleet while in a fleet), **public** (CCP's and player-made, stable id), and **private messages**. Fleet and private ids are new every time, so they can only be configured as a kind ("all fleets", "all private messages"); Local, Corp, Alliance and public channels have stable ids and can also be configured by id (shown by name).
 
-Proposed model: every setting is optional at each level and inherits downward.
+Every setting is optional at each level and inherits downward (least to most specific):
 ```
-global defaults
-  channel kind             (all private messages, all fleets, Local, Corp, Alliance, public)
-  channel                  (one public channel by id, e.g. EVE University)
-  pilot                    (this character, any channel)
-    pilot + kind / channel (most specific)
+global -> channel kind -> one channel (by id) -> pilot -> pilot + kind -> pilot + channel
 ```
-Two kinds of setting:
-- **Preferences** (what and how: rules/keywords, style, delivery mode, sound, lifetime, suppression): the most specific level that sets one wins. Open question: when pilot and channel disagree, the proposal is that the channel wins (it expresses content), with pilot + channel above both.
-- **Limits** (annoyance ceilings: rate cap per minute, per-sender/channel cooldown, minimum priority): applied at every level, so a channel-level "always alert" cannot exceed a pilot's cap. A capped alert is dropped or folded into the count badge (configurable).
+Owner decision: defaults come from the channel kind, and **a pilot's own setting overrides them** ("if a pilot changes that, it's for a reason"). Two kinds of setting:
+- **Preferences** take the most specific value that is set; a list (keywords, ignored senders...) set at a level replaces the inherited list. They are: `mode` (mute / mentions only / matching / everything), the content rules, `delivery`, `suppression`, `style`, `sound`.
+- **Limits** are ceilings that all apply: a rate cap at any level counts per pilot over the last minute, and a channel cannot lift a pilot's cap. Over the cap an alert is dropped or folded into the count badge (the strictest exceeded cap decides). Limited alerts are not counted, and suppressed alerts never count.
 
-Candidate annoyance controls per pilot and per channel: mute / mentions only / everything matching; rate cap and what happens over it; repeat suppression (same sender and text within N seconds); sound on/off and volume; overlay lifetime and maximum stack; behavior when away. First to ship (owner to confirm): mute or mentions-only, rate cap, sound on/off. Settings UI implication: a pilots x channels matrix that shows inherited values in a muted color and overrides in full color.
+Built-in defaults by kind (proposals for the owner to tune; `Settings::with_defaults`): private messages `Everything` as a Beacon; Local and Alliance capped at 6 per minute and public channels at 4, past the cap folded; Corp, Fleet and the rest plain `Matching`. First annoyance controls shipped (owner approved): mute or mentions-only, rate cap, sound on/off; the structure allows more (BACKLOG).
+
+Code: `prefs` (the vocabulary), `settings` (`Layer`, `PilotSettings`, `Settings`, `resolve`, and `SettingsBook` which caches resolved behavior per pilot and channel because every line is checked), `rules` (content rules and `evaluate_mode`), `engine` (resolves per listener and puts each target's resolved `Prefs` on the alert), `router` (uses those prefs), `governor` (rate caps, needs memory). Settings persist as JSON (`Settings::load/save`, atomic write; a missing file means the built-in defaults). Settings UI implication: a pilots x channels matrix that shows inherited values in a muted color and overrides in full color.
 
 ## Rules UX
 

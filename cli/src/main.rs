@@ -2,23 +2,28 @@
 //!
 //!   chatter [--dir <Chatlogs>] [--keyword <text>]... [--regex <pattern>]...
 //!           [--suppress focused|visible|none] [--delivery auto|overlay|toast|both|sound]
-//!           [--pilots <file.json>] [--verbose] [--seconds <n>]
+//!           [--settings <file.json>] [--pilots <file.json>] [--verbose] [--seconds <n>]
 //!
 //! Without --dir it finds Documents\EVE\logs\Chatlogs through the Windows
-//! known-folder API (this follows OneDrive). Own-name mentions always alert;
-//! --keyword and --regex add rules. Each alert is routed through presence
-//! (which EVE client has focus, which are on screen) and printed with the
-//! decision: suppressed, overlay (and where), toast, or sound. Nothing is ever
-//! written to the log folder. --pilots keeps the registry of characters
-//! between runs (otherwise it lives in memory only).
+//! known-folder API (this follows OneDrive). Settings are layered (global,
+//! channel kind, channel, pilot...) and start from the built-in defaults by
+//! kind, or from --settings; --keyword, --regex, --suppress and --delivery
+//! adjust the global layer. Each alert is routed through presence (which EVE
+//! client has focus, which are on screen) and the rate caps, and printed with
+//! the decision: suppressed, overlay (and where), toast, sound, or held back.
+//! Nothing is ever written to the log folder. --pilots keeps the registry of
+//! characters between runs (otherwise it lives in memory only).
 
 use eve_chatterer_core::engine::{Alert, Engine, EngineConfig, Event};
+use eve_chatterer_core::governor::Governor;
 use eve_chatterer_core::liveset::Discovery;
 use eve_chatterer_core::paths;
 use eve_chatterer_core::pilots::PilotRegistry;
+use eve_chatterer_core::prefs::{DeliveryMode, OverCap, Suppression};
 use eve_chatterer_core::presence::Snapshot;
-use eve_chatterer_core::router::{self, Anchor, Decision, Delivery, DeliveryMode, Outcome, RouterConfig, Suppression, SuppressedBy};
-use eve_chatterer_core::rules::{Reason, RuleBook, RuleSet};
+use eve_chatterer_core::router::{self, Anchor, Decision, Delivery, Outcome, RouterConfig, SuppressedBy};
+use eve_chatterer_core::rules::Reason;
+use eve_chatterer_core::settings::{Settings, SettingsBook};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -30,8 +35,9 @@ struct Args {
     keywords: Vec<String>,
     regexes: Vec<String>,
     pilots: Option<PathBuf>,
-    suppress: Suppression,
-    delivery: DeliveryMode,
+    settings: Option<PathBuf>,
+    suppress: Option<Suppression>,
+    delivery: Option<DeliveryMode>,
     verbose: bool,
     seconds: Option<u64>,
 }
@@ -42,8 +48,9 @@ fn parse_args() -> Result<Args, String> {
         keywords: vec![],
         regexes: vec![],
         pilots: None,
-        suppress: Suppression::FocusedOnly,
-        delivery: DeliveryMode::Auto,
+        settings: None,
+        suppress: None,
+        delivery: None,
         verbose: false,
         seconds: None,
     };
@@ -55,24 +62,25 @@ fn parse_args() -> Result<Args, String> {
             "--keyword" => a.keywords.push(value("a word")?),
             "--regex" => a.regexes.push(value("a pattern")?),
             "--pilots" => a.pilots = Some(PathBuf::from(value("a file")?)),
+            "--settings" => a.settings = Some(PathBuf::from(value("a file")?)),
             "--seconds" => a.seconds = Some(value("a number")?.parse().map_err(|_| "--seconds needs a number".to_string())?),
             "--suppress" => {
-                a.suppress = match value("focused, visible or none")?.as_str() {
+                a.suppress = Some(match value("focused, visible or none")?.as_str() {
                     "focused" => Suppression::FocusedOnly,
                     "visible" => Suppression::VisibleOnScreen,
                     "none" => Suppression::AllowAll,
                     other => return Err(format!("unknown --suppress {other}")),
-                }
+                })
             }
             "--delivery" => {
-                a.delivery = match value("auto, overlay, toast, both or sound")?.as_str() {
+                a.delivery = Some(match value("auto, overlay, toast, both or sound")?.as_str() {
                     "auto" => DeliveryMode::Auto,
                     "overlay" => DeliveryMode::Overlay,
                     "toast" => DeliveryMode::Toast,
                     "both" => DeliveryMode::Both,
                     "sound" => DeliveryMode::SoundOnly,
                     other => return Err(format!("unknown --delivery {other}")),
-                }
+                })
             }
             "--verbose" => a.verbose = true,
             "-h" | "--help" => return Err(String::new()),
@@ -127,6 +135,8 @@ fn print_alert(a: &Alert, decisions: &[Decision]) {
         let what = match &d.outcome {
             Outcome::Suppressed(SuppressedBy::FocusedPilot) => "suppressed (you are on this client)".to_string(),
             Outcome::Suppressed(SuppressedBy::VisibleOnScreen) => "suppressed (this client is on screen)".to_string(),
+            Outcome::Limited(OverCap::Drop) => "over its rate cap: dropped".to_string(),
+            Outcome::Limited(OverCap::Fold) => "over its rate cap: folded into the count badge".to_string(),
             Outcome::Deliver(v) if v.is_empty() => "nothing to show".to_string(),
             Outcome::Deliver(v) => v.iter().map(delivery).collect::<Vec<_>>().join(" + "),
         };
@@ -168,7 +178,7 @@ fn main() {
             eprintln!(
                 "usage: chatter [--dir <Chatlogs>] [--keyword <text>]... [--regex <pattern>]...\n\
                  \x20              [--suppress focused|visible|none] [--delivery auto|overlay|toast|both|sound]\n\
-                 \x20              [--pilots <file.json>] [--verbose] [--seconds <n>]"
+                 \x20              [--settings <file.json>] [--pilots <file.json>] [--verbose] [--seconds <n>]"
             );
             std::process::exit(if msg.is_empty() { 0 } else { 2 });
         }
@@ -178,14 +188,29 @@ fn main() {
         std::process::exit(1);
     };
 
-    let rules = RuleSet { keywords: args.keywords.clone(), regexes: args.regexes.clone(), ..RuleSet::default() };
-    let book = match RuleBook::new(&rules) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("bad --regex: {e}");
-            std::process::exit(2);
-        }
+    // Built-in defaults by channel kind, or a settings file; the flags then
+    // adjust the global layer.
+    let mut settings = match &args.settings {
+        Some(p) => Settings::load(p).unwrap_or_else(|e| {
+            eprintln!("could not read {}: {e}", p.display());
+            std::process::exit(1);
+        }),
+        None => Settings::with_defaults(),
     };
+    if !args.keywords.is_empty() {
+        settings.global.keywords = Some(args.keywords.clone());
+    }
+    if !args.regexes.is_empty() {
+        settings.global.regexes = Some(args.regexes.clone());
+    }
+    settings.global.suppression = args.suppress.or(settings.global.suppression);
+    settings.global.delivery = args.delivery.or(settings.global.delivery);
+    let bad = settings.invalid_regexes();
+    if !bad.is_empty() {
+        eprintln!("bad regex: {}", bad.join(", "));
+        std::process::exit(2);
+    }
+    let book = SettingsBook::new(settings);
     let pilots = match &args.pilots {
         Some(p) => PilotRegistry::load(p).unwrap_or_else(|e| {
             eprintln!("could not read {}: {e}", p.display());
@@ -193,9 +218,8 @@ fn main() {
         }),
         None => PilotRegistry::default(),
     };
-    let mut router_cfg = RouterConfig::default();
-    router_cfg.suppression = args.suppress;
-    router_cfg.delivery = args.delivery;
+    let router_cfg = RouterConfig::default();
+    let mut governor = Governor::new();
 
     println!("[{}] watching {}", clock(), dir.display());
     let mut engine = Engine::new(&dir, EngineConfig::default(), pilots, book);
@@ -239,7 +263,7 @@ fn main() {
         for ev in events {
             match ev {
                 Event::Alert(a) => {
-                    let decisions = router::route(&a, &presence.snap, &router_cfg);
+                    let decisions = governor.apply(router::route(&a, &presence.snap, &router_cfg), now);
                     print_alert(&a, &decisions);
                 }
                 Event::NewPilot(p) => {

@@ -13,6 +13,13 @@
 - Bundle Barlow with the app (the mockup loads it from Google Fonts).
 - Optional frosted glass through Windows acrylic on the overlay window; check its GPU cost over EVE first.
 
+## Settings
+- More annoyance controls beyond the three shipped (mode, rate cap, sound): repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, away behavior, minimum priority. The layer structure already allows adding fields.
+- Settings UI: a pilots x channels matrix with inherited values muted and overrides in full color; a "reset to inherited" action per field.
+- Where the settings and pilot registry files live (proposal: `%APPDATA%\eve-chatterer\`), and migrating older files as fields are added.
+- Confirm the built-in kind defaults with the owner (private = everything as a Beacon; Local/Alliance capped at 6 per minute, public at 4, folding).
+- The overlay manager must honor `Outcome::Limited(Fold)` by incrementing the count badge of the alert that is already showing.
+
 ## Open questions
 - Are chat log headers localized on non-English clients? Plan: read the header by position (channel id, name, listener, start time) with keys as a check; find a non-English sample.
 - Is the launcher-provided character selection ever visible without the log? (No: window title gives the name, the log gives the id.)

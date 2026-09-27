@@ -14,7 +14,8 @@
 //! only their kind can be configured; Local and Corp are one channel each per
 //! character; a public channel has a stable id and can also be configured by id.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ChannelKind {
     Local,
     Corp,
