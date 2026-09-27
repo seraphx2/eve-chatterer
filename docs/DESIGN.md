@@ -81,6 +81,34 @@ Overlays for in-game events, native Windows notifications for app-level events (
 
 Configurable per rule and pilot: overlay / toast / both / sound only. New overlays appear on the virtual desktop the user is currently on. Toasts and overlays are both coalesced (one per channel or pilot, updated in place).
 
+## Settings screen (mockup finalized 2026-09-27, ready to implement)
+
+Mockup: `docs/design/settings-screen.html`. Sidebar/tree layout (owner reference: EVE's Inventory window — collapsible tree on the left, detail pane on the right), not a matrix:
+```
+Characters             <- CCP's own term; "Pilot" stays as the internal Rust name (Pilot, PilotRegistry,
+  Defaults                 pilots.json) since renaming that is a large mechanical change for no functional
+  Jarna                    benefit, but every user-facing label says "Character"
+  Psianna Archeia
+  ...
+Audio                 <- which sound FILE plays: No sound (global) / one shared file (replaceable) /
+                          a file per character. Separate from whether a channel makes a sound at all —
+                          that's still each channel's own Sound field (see below).
+General               <- startup-with-Windows checkbox (tauri-plugin-autostart, proven in dev-prompt), other app-wide options
+About                 <- version, changelog, check-for-updates (tauri-plugin-updater, proven in dev-prompt: see updater.ts's check/install/currentVersion wrapper and the updater_mode() self/managed/unmanaged gate)
+```
+
+Owner decision 2026-09-27: **channel settings are authored per character, not as a separate global "channels" section** — individual public channels are inherently per-character (each discovers its own), and even the universal kinds (Corp/Alliance/Fleet/Private) default per character rather than force a single shared page, so "Defaults" is simply the top entry in the Characters tree. **Every channel row, on Defaults and on every character's page and on every individually discovered public channel, shows the identical full field set** (Mode, Style, Rate cap, Sound) — no row is ever sparser than another; an earlier mockup pass trimmed some rows for brevity and that was wrong. **Tracked keywords are per character too**, for the same reason and using the same override mechanism (a character can hold its own list instead of Defaults'), not a global-only list.
+
+**Live inheritance, not copy-at-creation** (owner decision, same day): a newly detected character gets an *empty* settings layer — nothing is copied from Defaults. It resolves through to whatever Defaults currently says for every field it hasn't touched, forever, and automatically follows any later change to Defaults. Only a character's own explicit override (`Some(_)` in its `Layer`, vs `None`) freezes a field against future default changes. This matches the core's existing `Settings::resolve()` and needs no new mechanism, just a UI over it — and matches how the owner already talks about changes ("treat any change to Corp as applying to Alliance").
+
+**Deviation indicator is per FIELD, not per row** (revised from the first mockup pass, since a single row can have some fields overridden and others inherited at once — e.g. a character might override just a channel's Style and nothing else on that row): the overridden field's label gets a small persistent marker (owner reference: PrusaSlicer's modified-vs-profile dot, but permanent — every field's `Option<T>` already IS the saved state, there's no separate unsaved-changes session) plus an inline "↺ was X" revert control next to that one field. An untouched field just shows the inherited value with no decoration. Internal implementation notes (e.g. "Corp is kept identical to Alliance") never appear in this UI — that's a note to future code-editors, not something a user needs to know; Corp and Alliance render as two perfectly ordinary, independently-editable rows.
+
+**Audio is a separate top-level page, not a per-channel field for "which file"** (owner decision 2026-09-27, after two passes — the first mockup wrongly removed per-channel Sound entirely when adding this page): three choices — No sound (global kill switch), one shared sound file (built-in initially, replaceable via Browse so a single custom preference never needs repeating per character), or a distinct file per character (any character left unset falls back to the shared file). This page only decides *which file* would play; *whether* a given channel makes a sound at all remains a normal cascaded per-channel/per-character `Sound` field, on equal footing with Mode/Style/Rate cap, so a channel can be silenced independently down to one character, one channel.
+
+Small UI-polish notes worth preserving from the mockup review: character status badge reads "Online," not "Playing"; every `<button>` needs an explicit `border: none` (plus `appearance: none`) — leaving the native OS border un-reset while adding a custom background produces the "colored button with a stock beveled border" look, easy to miss and easy to get right with one blanket reset rule.
+
+Next: wire this into the real Svelte settings window and the settings load/save commands, replacing the current placeholder status-only window (`app/src/settings/Settings.svelte`).
+
 ## Overlay anchoring
 
 Overlays are separate topmost, click-through, non-activating windows in screen coordinates (not injected into the game). Per-pilot anchor mode:

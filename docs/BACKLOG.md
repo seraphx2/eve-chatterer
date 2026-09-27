@@ -19,10 +19,17 @@
 
 ## Settings
 - More annoyance controls beyond the three shipped (mode, rate cap, sound): repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, away behavior, minimum priority. The layer structure already allows adding fields.
-- Settings UI: a pilots x channels matrix with inherited values muted and overrides in full color; a "reset to inherited" action per field.
+- Settings UI: superseded by the finalized mockup (`docs/design/settings-screen.html`, see DESIGN.md "Settings screen") — a sidebar/tree (Characters > Defaults/each character, Audio, General, About), not a matrix, with a per-field deviation marker and revert control. Remaining work: wire it into `app/src/settings/Settings.svelte` and add the settings load/save Tauri commands.
 - Where the settings and pilot registry files live (proposal: `%APPDATA%\eve-chatterer\`), and migrating older files as fields are added.
 - Confirm the built-in kind defaults with the owner (private = everything as a Beacon; Local/Alliance capped at 6 per minute, public at 4, folding).
 - The overlay manager must honor `Outcome::Limited(Fold)` by incrementing the count badge of the alert that is already showing.
+
+## Linux support (unresearched, general knowledge only — not measured like the Windows findings)
+- `paths.rs`'s Linux fallback (`$HOME/Documents`) is wrong for the real case: EVE has no native Linux client, so logs live inside a Wine/Proton prefix (e.g. `~/.local/share/Steam/steamapps/compatdata/<appid>/pfx/drive_c/users/steamuser/Documents/EVE/logs/Chatlogs`). Needs a real fix (search known compatdata paths, or ask the user) before Linux support means anything.
+- Presence/focus tracking: plausible on X11 via EWMH properties (same idea as the Windows implementation); no standard, portable way on Wayland for an unprivileged app to query the focused window — wlroots compositors (Sway, Hyprland) expose a protocol for it, GNOME/KDE largely don't. Directly affects focus-based suppression.
+- The overlay window (topmost, click-through, non-activating, exact placement): well-understood on X11 (override-redirect, what most Linux overlay tools use); Wayland compositors deliberately restrict this for arbitrary apps. Biggest risk to the app's core feature on Linux. Mitigating factor: EVE under Proton commonly renders via XWayland even in a Wayland session, so an X11-based approach might still reach the game window in practice — unverified.
+- Toasts (freedesktop D-Bus notification spec) and idle detection (systemd-logind D-Bus) are solid and arguably easier than Windows.
+- Before spending real engineering time: build a Linux probe (window enumeration, focus, a topmost/click-through window) on an actual box with EVE under Proton, the same rigor as the Windows probes in `tools/`, rather than trusting the analysis above.
 
 ## Open questions
 - Are chat log headers localized on non-English clients? Plan: read the header by position (channel id, name, listener, start time) with keys as a check; find a non-English sample.
