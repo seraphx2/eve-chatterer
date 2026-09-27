@@ -2,3 +2,6 @@
 probe-log.txt
 focus-log.txt
 overlay-log.txt
+node_modules
+/app/dist
+/app/src-tauri/gen

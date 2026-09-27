@@ -1,0 +1,255 @@
+/* Overlay styles: see docs/design/alert-styles.html for the reference mockups. */
+:root {
+  --glass-top: rgba(70, 96, 110, 0.8);
+  --glass-bottom: rgba(24, 43, 51, 0.9);
+  --edge: rgba(190, 215, 228, 0.16);
+  --edge-hi: rgba(220, 238, 246, 0.26);
+  --strip: rgba(120, 155, 172, 0.2);
+  --ink: #dbe5ea;
+  --ink-dim: #93a8b4;
+  --badge: #1d5f9f;
+  --badge-ink: #e8f3fb;
+  --mention: #e3a53a;
+  --keyword: #55c4d6;
+  --always: #6f9fe0;
+  --font: "Barlow", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The window is transparent and click-through; only the alerts are drawn. */
+html,
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  color: var(--ink);
+  font: 400 16px/1.4 var(--font);
+  user-select: none;
+  cursor: default;
+}
+
+.stack {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  translate: -50% 0;
+  width: 460px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+p {
+  margin: 0;
+}
+b {
+  font-weight: 500;
+}
+
+.glass {
+  background: linear-gradient(165deg, var(--glass-top), var(--glass-bottom));
+  box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 6px 22px rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+}
+
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  font: 600 12px/1 var(--font);
+  color: var(--badge-ink);
+  background: linear-gradient(180deg, #2872b8, var(--badge));
+  box-shadow: inset 0 0 0 1px rgba(160, 205, 245, 0.35);
+}
+
+/* The lifetime meter: three segments that drain one after another. */
+.life {
+  display: flex;
+  gap: 2px;
+}
+.life i {
+  display: block;
+  width: 36px;
+  height: 3px;
+  background: #e6eef2;
+  transform-origin: left;
+  animation: drain calc(var(--life) / 3) linear forwards;
+}
+.life i:nth-child(2) {
+  animation-delay: calc(var(--life) / 3);
+}
+.life i:nth-child(3) {
+  animation-delay: calc(var(--life) * 2 / 3);
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes drain {
+  to {
+    transform: scaleX(0);
+  }
+}
+@keyframes pulse {
+  0% {
+    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 0 0 var(--glow), 0 6px 22px rgba(0, 0, 0, 0.35);
+  }
+  35% {
+    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 26px 2px var(--glow), 0 6px 22px rgba(0, 0, 0, 0.35);
+  }
+  100% {
+    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 0 0 var(--glow), 0 6px 22px rgba(0, 0, 0, 0.35);
+  }
+}
+.alert {
+  animation: arrive 240ms ease-out both;
+}
+
+/* ---------- Panel ---------- */
+.panel {
+  position: relative;
+  width: 420px;
+}
+.panel .notch {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  translate: -50% 0;
+  width: 64px;
+  height: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+.panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 12px;
+  background: var(--strip);
+  font: 400 12px/1.2 var(--font);
+  color: var(--ink-dim);
+  box-shadow: inset 0 -1px 0 var(--edge);
+}
+.panel header .pilot {
+  color: var(--ink);
+  font-weight: 500;
+}
+.panel .text {
+  padding: 10px 12px 4px;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 300;
+  overflow-wrap: anywhere;
+}
+.panel .text b {
+  margin-right: 6px;
+}
+.panel .why {
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--accent);
+}
+.panel footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px 12px;
+}
+
+/* ---------- Strip ---------- */
+.strip {
+  width: 420px;
+  height: 34px;
+  display: grid;
+  grid-template-columns: 26px auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 0;
+  border-left: 3px solid var(--pilot);
+  font-size: 14px;
+  font-weight: 300;
+}
+.strip .chip {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font: 600 13px var(--font);
+  color: var(--pilot);
+  background: color-mix(in srgb, var(--pilot) 14%, transparent);
+}
+.strip .chan {
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+.strip .msg {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strip .msg b {
+  margin-right: 6px;
+}
+
+/* ---------- Beacon ---------- */
+.beacon {
+  width: 460px;
+  border-left: 4px solid var(--accent);
+  --glow: color-mix(in srgb, var(--accent) 55%, transparent);
+  padding: 12px 16px 12px 14px;
+  animation: arrive 240ms ease-out both, pulse 900ms ease-out 240ms 1;
+}
+.beacon .top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.beacon .top .why {
+  color: var(--accent);
+  font-weight: 500;
+}
+.beacon .sender {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.2;
+  margin-top: 6px;
+}
+.beacon .body {
+  font-size: 15px;
+  font-weight: 300;
+  line-height: 1.4;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.beacon .foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alert,
+  .beacon,
+  .life i {
+    animation: none !important;
+  }
+}

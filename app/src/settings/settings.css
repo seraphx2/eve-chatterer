@@ -1,0 +1,100 @@
+:root {
+  --page: #0e161d;
+  --panel: #16232c;
+  --edge: rgba(190, 215, 228, 0.16);
+  --ink: #dbe5ea;
+  --ink-dim: #93a8b4;
+  --accent: #55c4d6;
+  --font: "Barlow", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 400 15px/1.5 var(--font);
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 24px 40px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-weight: 300;
+  font-size: 28px;
+}
+
+h2 {
+  margin: 28px 0 8px;
+  font-weight: 500;
+  font-size: 17px;
+}
+
+p {
+  margin: 0;
+}
+
+.dim {
+  color: var(--ink-dim);
+}
+
+section {
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  padding: 14px 16px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--edge);
+  font-weight: 400;
+}
+
+th {
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+button {
+  font: 500 14px var(--font);
+  color: var(--ink);
+  background: #1c2c37;
+  border: 1px solid rgba(220, 238, 246, 0.26);
+  border-radius: 0;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #23384a;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.live {
+  color: #62d1a5;
+}

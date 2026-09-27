@@ -1,0 +1,26 @@
+[package]
+name = "eve-chatterer-app"
+version.workspace = true
+edition.workspace = true
+description = "EVE chat notifier: tray app with in-game overlays"
+license = "MIT"
+
+[lib]
+name = "eve_chatterer_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+eve-chatterer-core = { path = "../../core" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"]
