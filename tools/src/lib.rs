@@ -1,4 +1,4 @@
-//! EVE chat notifier core. Currently just the pieces the probes share.
+//! Shared code for the probes: the Win32 helpers live in the core crate.
 
 #[cfg(windows)]
-pub mod winutil;
+pub use eve_chatterer_core::winapi as winutil;

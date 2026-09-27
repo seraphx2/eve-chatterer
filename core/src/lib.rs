@@ -1,4 +1,4 @@
-//! EVE chat notifier core: log tracking, rules and the alert engine. No UI.
+//! EVE chat notifier core: log tracking, rules, presence and the alert router. No UI.
 
 pub mod engine;
 pub mod liveset;
@@ -6,6 +6,10 @@ pub mod logfmt;
 pub mod merge;
 pub mod paths;
 pub mod pilots;
+pub mod presence;
+pub mod router;
 pub mod rules;
 pub mod tailer;
 pub mod time;
+#[cfg(windows)]
+pub mod winapi;

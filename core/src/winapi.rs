@@ -1,15 +1,20 @@
-//! Win32 helpers: window/process lookup and EVE client state.
+//! Win32 helpers: window/process lookup and EVE client state. Windows only.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::presence::Rect;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use windows::core::{BOOL, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+use windows::Win32::UI::Shell::SHQueryUserNotificationState;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible,
+    EnumChildWindows, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    IsIconic, IsWindowVisible,
 };
 
 /// UTC wall clock, HH:MM:SS.mmmZ.
@@ -17,6 +22,11 @@ pub fn ts() -> String {
     let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let s = d.as_secs() % 86400;
     format!("{:02}:{:02}:{:02}.{:03}Z", s / 3600, s % 3600 / 60, s % 60, d.subsec_millis())
+}
+
+pub fn foreground() -> Option<HWND> {
+    let h = unsafe { GetForegroundWindow() };
+    (!h.0.is_null()).then_some(h)
 }
 
 pub fn title_of(h: HWND) -> String {
@@ -38,7 +48,7 @@ pub fn pid_of(h: HWND) -> u32 {
 }
 
 /// Full exe path. PROCESS_QUERY_LIMITED_INFORMATION needs no admin rights
-/// and works for most elevated processes too.
+/// and works for most elevated processes too. Never reads the command line.
 pub fn exe_of(pid: u32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
@@ -89,13 +99,12 @@ pub fn resolve(h: HWND) -> (u32, Option<String>, &'static str) {
     (pid, exe, "")
 }
 
-/// The character name if this is an EVE client window ("EVE - Name").
+/// The character name if this is an EVE client window with a character
+/// ("EVE - Name"). A client at the login screen has no character yet.
 pub fn character_of(exe: &Option<String>, title: &str) -> Option<String> {
     let is_eve = exe.as_deref().is_some_and(|e| file_name(e).eq_ignore_ascii_case("exefile.exe"));
-    if !is_eve {
-        return None;
-    }
-    Some(title.strip_prefix("EVE - ").map(str::to_string).unwrap_or_else(|| "<no character yet>".into()))
+    let name = title.strip_prefix("EVE - ")?.trim();
+    (is_eve && !name.is_empty()).then(|| name.to_string())
 }
 
 /// Every top-level EVE client window on any virtual desktop (no visibility filter).
@@ -130,6 +139,57 @@ pub fn cloaked(h: HWND) -> u32 {
     v
 }
 
+pub fn is_minimized(h: HWND) -> bool {
+    unsafe { IsIconic(h) }.as_bool()
+}
+
+pub fn is_visible(h: HWND) -> bool {
+    unsafe { IsWindowVisible(h) }.as_bool()
+}
+
+impl From<RECT> for Rect {
+    fn from(r: RECT) -> Rect {
+        Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    }
+}
+
+/// Visible frame of a window (without the invisible resize border).
+pub fn rect_of(h: HWND) -> Option<Rect> {
+    let mut r = RECT::default();
+    unsafe {
+        DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut RECT as *mut _, std::mem::size_of::<RECT>() as u32)
+            .ok()?;
+    }
+    Some(r.into())
+}
+
+pub fn monitor_rect_of(h: HWND) -> Option<Rect> {
+    unsafe {
+        let m = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        GetMonitorInfoW(m, &mut mi).as_bool().then(|| mi.rcMonitor.into())
+    }
+}
+
+/// Time since the last keyboard or mouse input, system-wide.
+pub fn idle_duration() -> Duration {
+    unsafe {
+        let mut li = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+        if GetLastInputInfo(&mut li).as_bool() {
+            Duration::from_millis(u64::from(GetTickCount().wrapping_sub(li.dwTime)))
+        } else {
+            Duration::ZERO
+        }
+    }
+}
+
+/// True when a Windows toast would be shown right now. Not a display-mode
+/// detector: it read `BUSY` for some EVE display modes and not others
+/// (docs/FINDINGS.md #5).
+pub fn notifications_ok() -> bool {
+    matches!(unsafe { SHQueryUserNotificationState() }, Ok(s) if s.0 == 5)
+}
+
 /// One line describing every EVE client: focus, minimized, visible, cloaked.
 pub fn clients_state(fg: isize) -> String {
     eve_clients()
@@ -139,8 +199,8 @@ pub fn clients_state(fg: isize) -> String {
             format!(
                 "{c}[{} {} {} cloak={}]",
                 if *hwnd == fg { "FOCUSED" } else { "-" },
-                if unsafe { IsIconic(h) }.as_bool() { "MINIMIZED" } else { "-" },
-                if unsafe { IsWindowVisible(h) }.as_bool() { "visible" } else { "hidden" },
+                if is_minimized(h) { "MINIMIZED" } else { "-" },
+                if is_visible(h) { "visible" } else { "hidden" },
                 cloaked(h)
             )
         })

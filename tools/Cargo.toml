@@ -9,6 +9,7 @@ name = "eve_chatterer_tools"
 
 [dependencies]
 notify = "8"
+eve-chatterer-core = { path = "../core" }
 
 [target.'cfg(windows)'.dependencies.windows]
 workspace = true

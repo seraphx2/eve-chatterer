@@ -12,6 +12,7 @@ use crate::merge::{Listener, MergedLine, Merger};
 use crate::pilots::{Observation, Pilot, PilotRegistry};
 use crate::rules::{LineCtx, Reason, RuleBook};
 use crate::time::Stamp;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,6 +26,9 @@ pub struct EngineConfig {
     /// A session created this recently counts as a live pilot even before it
     /// has produced a line.
     pub new_session_is_live: Duration,
+    /// A client window whose character has no log after this long means chat
+    /// logging is probably off in EVE's settings.
+    pub logging_off_after: Duration,
 }
 
 impl Default for EngineConfig {
@@ -35,6 +39,7 @@ impl Default for EngineConfig {
             merge_tolerance_secs: 2,
             rescan_every: Duration::from_secs(5),
             new_session_is_live: Duration::from_secs(120),
+            logging_off_after: Duration::from_secs(90),
         }
     }
 }
@@ -64,6 +69,9 @@ pub enum Event {
     NewPilot(Pilot),
     /// A pilot seen only in old logs, registered silently.
     PilotInLogs(Pilot),
+    /// A client window for this character has existed for a while but no chat
+    /// log has appeared: "log chat to file" is probably off in EVE. Reported once.
+    ChatLoggingOff { name: String },
     Alert(Alert),
 }
 
@@ -74,6 +82,9 @@ pub struct Engine {
     rules: RuleBook,
     cfg: EngineConfig,
     last_rescan: Option<Instant>,
+    /// Client windows whose character has no log yet, and since when.
+    client_wait: HashMap<String, Instant>,
+    logging_off_reported: HashSet<String>,
 }
 
 fn wall_clock() -> Stamp {
@@ -89,7 +100,38 @@ impl Engine {
             rules,
             cfg,
             last_rescan: None,
+            client_wait: HashMap::new(),
+            logging_off_reported: HashSet::new(),
         }
+    }
+
+    /// Feed the names of the running EVE client windows (from presence).
+    ///
+    /// A pilot already known by name is marked live at once. A character the
+    /// registry has never seen cannot be registered from the window alone (the
+    /// title has the name, not the id); its log supplies the id within seconds
+    /// of login, and the normal tick registers it then. If no log ever shows up,
+    /// report that chat logging looks off, once.
+    pub fn observe_clients(&mut self, names: &[&str], now: Instant) -> Vec<Event> {
+        let mut events = vec![];
+        for name in names {
+            let has_log = self.live.sessions().any(|s| s.header.is_some_and(|h| h.listener.eq_ignore_ascii_case(name)));
+            if let Some(id) = self.pilots.by_name(name).map(|p| p.id.clone()) {
+                events.extend(self.mark_live(&id, name));
+                self.client_wait.remove(&name.to_lowercase());
+            } else if has_log {
+                self.client_wait.remove(&name.to_lowercase()); // the next tick registers it
+            } else {
+                let since = *self.client_wait.entry(name.to_lowercase()).or_insert(now);
+                if now.duration_since(since) >= self.cfg.logging_off_after && self.logging_off_reported.insert(name.to_lowercase()) {
+                    events.push(Event::ChatLoggingOff { name: name.to_string() });
+                }
+            }
+        }
+        // A closed client no longer waits for a log.
+        let open: HashSet<String> = names.iter().map(|n| n.to_lowercase()).collect();
+        self.client_wait.retain(|k, _| open.contains(k));
+        events
     }
 
     pub fn pilots(&self) -> &PilotRegistry {
@@ -311,6 +353,43 @@ mod tests {
         assert!(e.pilots().get("9").is_some_and(|p| !p.live));
         append(&p, &line("2026.09.26 10:00:05", "Bob", "hello"));
         assert!(e.tick(t0 + Duration::from_millis(500)).iter().any(|x| matches!(x, Event::NewPilot(p) if p.id == "9")));
+    }
+
+    #[test]
+    fn a_client_without_a_log_is_reported_once_as_logging_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = engine(dir.path(), RuleSet::default());
+        let t0 = Instant::now();
+        assert!(e.observe_clients(&["Jarna"], t0).is_empty());
+        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(60)).is_empty(), "still within the wait");
+        let ev = e.observe_clients(&["Jarna"], t0 + Duration::from_secs(91));
+        assert!(matches!(ev.as_slice(), [Event::ChatLoggingOff { name }] if name == "Jarna"));
+        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(200)).is_empty(), "reported only once");
+    }
+
+    #[test]
+    fn a_client_whose_log_appears_is_registered_by_the_tick_not_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = engine(dir.path(), RuleSet::default());
+        let t0 = Instant::now();
+        assert!(e.observe_clients(&["Jarna"], t0).is_empty());
+        session(dir.path(), "Local", "1", "Jarna");
+        let ev = e.tick(t0 + Duration::from_secs(1));
+        assert!(ev.iter().any(|x| matches!(x, Event::PilotInLogs(p) if p.name == "Jarna")));
+        // Now the name resolves through the registry and the pilot goes live.
+        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(2)).iter().any(|x| matches!(x, Event::NewPilot(p) if p.id == "1")));
+        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(200)).is_empty());
+    }
+
+    #[test]
+    fn a_closed_client_stops_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = engine(dir.path(), RuleSet::default());
+        let t0 = Instant::now();
+        e.observe_clients(&["Jarna"], t0);
+        e.observe_clients(&[], t0 + Duration::from_secs(60)); // window closed
+        // Reopened later: the clock starts again rather than firing immediately.
+        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(100)).is_empty());
     }
 
     #[test]
