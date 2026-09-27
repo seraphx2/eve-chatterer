@@ -99,9 +99,14 @@ fn reason(r: &Reason) -> String {
 
 fn delivery(d: &Delivery) -> String {
     match d {
-        Delivery::Overlay { anchor: Anchor::Monitor(m) } => format!("overlay on monitor ({},{})-({},{})", m.left, m.top, m.right, m.bottom),
-        Delivery::Overlay { anchor: Anchor::FollowWindow { hwnd } } => format!("overlay following window {hwnd:#x}"),
-        Delivery::Overlay { anchor: Anchor::Unknown } => "overlay (no known monitor)".into(),
+        Delivery::Overlay { anchor, style } => {
+            let style = format!("{style:?}").to_lowercase();
+            match anchor {
+                Anchor::Monitor(m) => format!("{style} overlay on monitor ({},{})-({},{})", m.left, m.top, m.right, m.bottom),
+                Anchor::FollowWindow { hwnd } => format!("{style} overlay following window {hwnd:#x}"),
+                Anchor::Unknown => format!("{style} overlay (no known monitor)"),
+            }
+        }
         Delivery::Toast { switch_to } => format!("toast, action: switch to {switch_to}"),
         Delivery::Sound => "sound".into(),
     }

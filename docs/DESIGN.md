@@ -87,6 +87,17 @@ Overlays are separate topmost, click-through, non-activating windows in screen c
 - **Fallback**: no visible client window (Fullscreen hidden/minimized): use that pilot's last known monitor.
 - Automatic choice from whether the client window fills its monitor; per-pilot override.
 
+## Overlay styles
+
+Three styles, used together for different situations (mockups with the exact look: `docs/design/alert-styles.html`, derived from the owner's EVE Drones window: translucent steel glass, sharp corners, thin type, three-segment bar, one blue badge):
+- **Panel** (about 420 x 118): header with pilot and channel, sender, message, reason label, lifetime meter. Default for keyword and regex matches.
+- **Strip** (about 420 x 34): one line, pilot-colored edge and initial. Default for always-alert channels/senders and for folding bursts.
+- **Beacon** (about 460 x 150): larger, one soft pulse on arrival, up to three lines of message. Default for own-name mentions.
+
+Shared details: the **lifetime meter** is three segments that drain in turn; the **blue badge** is the count of lines folded into an alert; the top notch/edge takes the reason color (mention amber `#e3a53a`, keyword cyan `#55c4d6`, always blue `#6f9fe0`); each pilot has an accent color. Overlays are click-through, so they contain no buttons or close marks; anything interactive is a toast. No blur of the game behind them (WebView2 cannot; Windows acrylic on the window is a later option). Font: Barlow, to be bundled with the app.
+
+Style choice: `router::StyleMap` maps the reason to a style (mention Beacon, keyword/regex Panel, always Strip) with a per-pilot override; both are settings. Burst folding (a fast run of alerts collapses into a Strip stack with a count badge) needs memory of recent alerts, so it lives in the overlay manager, not the pure router. A Beacon takes the top of the stack with Strips beneath; lifetime can differ per style (Beacon longest).
+
 ## Rules UX
 
 A few first-class rules (name mention, keywords, per-channel) with regex behind an "advanced" toggle.

@@ -41,8 +41,10 @@ pub struct RouterConfig {
     pub idle_after: Duration,
     /// Also play a sound with every delivered alert.
     pub sound: bool,
+    pub styles: StyleMap,
     pilot_delivery: HashMap<String, DeliveryMode>,
     pilot_suppression: HashMap<String, Suppression>,
+    pilot_style: HashMap<String, OverlayStyle>,
 }
 
 impl Default for RouterConfig {
@@ -52,8 +54,10 @@ impl Default for RouterConfig {
             delivery: DeliveryMode::Auto,
             idle_after: Duration::from_secs(5 * 60),
             sound: false,
+            styles: StyleMap::default(),
             pilot_delivery: HashMap::new(),
             pilot_suppression: HashMap::new(),
+            pilot_style: HashMap::new(),
         }
     }
 }
@@ -65,6 +69,15 @@ impl RouterConfig {
 
     pub fn set_pilot_suppression(&mut self, pilot_name: &str, s: Suppression) {
         self.pilot_suppression.insert(pilot_name.to_lowercase(), s);
+    }
+
+    /// Force one style for all of a pilot's overlays, whatever fired them.
+    pub fn set_pilot_style(&mut self, pilot_name: &str, style: OverlayStyle) {
+        self.pilot_style.insert(pilot_name.to_lowercase(), style);
+    }
+
+    fn style_for(&self, pilot_name: &str, reason: &Reason) -> OverlayStyle {
+        self.pilot_style.get(&pilot_name.to_lowercase()).copied().unwrap_or_else(|| self.styles.for_reason(reason))
     }
 
     fn delivery_for(&self, pilot_name: &str) -> DeliveryMode {
@@ -87,9 +100,53 @@ pub enum Anchor {
     Unknown,
 }
 
+/// How an overlay looks (docs/design/alert-styles.html).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayStyle {
+    /// EVE-window look with the reason and a lifetime meter: the default for keyword matches.
+    Panel,
+    /// One compact line: for high-volume channels.
+    Strip,
+    /// Large, with a pulse on arrival: for alerts that must not be missed.
+    Beacon,
+}
+
+/// Which style each kind of match gets. The overlay manager may still fold a
+/// burst of alerts into a strip stack; that needs memory of recent alerts and
+/// lives above this pure router.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StyleMap {
+    pub own_name: OverlayStyle,
+    pub keyword: OverlayStyle,
+    pub regex: OverlayStyle,
+    pub always: OverlayStyle,
+}
+
+impl Default for StyleMap {
+    fn default() -> Self {
+        StyleMap {
+            own_name: OverlayStyle::Beacon,
+            keyword: OverlayStyle::Panel,
+            regex: OverlayStyle::Panel,
+            always: OverlayStyle::Strip,
+        }
+    }
+}
+
+impl StyleMap {
+    fn for_reason(&self, r: &Reason) -> OverlayStyle {
+        match r {
+            Reason::OwnName => self.own_name,
+            Reason::Keyword(_) => self.keyword,
+            Reason::Regex(_) => self.regex,
+            Reason::AlwaysChannel(_) | Reason::AlwaysSender(_) => self.always,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Delivery {
-    Overlay { anchor: Anchor },
+    Overlay { anchor: Anchor, style: OverlayStyle },
     /// A native notification with a "switch to this pilot" action.
     Toast { switch_to: String },
     Sound,
@@ -141,16 +198,23 @@ pub fn route(alert: &Alert, snap: &Snapshot, cfg: &RouterConfig) -> Vec<Decision
             };
             let outcome = match suppressed {
                 Some(why) => Outcome::Suppressed(why),
-                None => Outcome::Deliver(deliveries(&t.pilot_name, client, snap, cfg, away)),
+                None => Outcome::Deliver(deliveries(&t.pilot_name, &t.reason, client, snap, cfg, away)),
             };
             Decision { pilot_name: t.pilot_name.clone(), pilot_id: t.pilot_id.clone(), reason: t.reason.clone(), outcome }
         })
         .collect()
 }
 
-fn deliveries(pilot: &str, client: Option<&ClientState>, snap: &Snapshot, cfg: &RouterConfig, away: bool) -> Vec<Delivery> {
+fn deliveries(
+    pilot: &str,
+    reason: &Reason,
+    client: Option<&ClientState>,
+    snap: &Snapshot,
+    cfg: &RouterConfig,
+    away: bool,
+) -> Vec<Delivery> {
     let mode = cfg.delivery_for(pilot);
-    let overlay = || Delivery::Overlay { anchor: anchor_for(client) };
+    let overlay = || Delivery::Overlay { anchor: anchor_for(client), style: cfg.style_for(pilot, reason) };
     let toast = || Delivery::Toast { switch_to: pilot.to_string() };
     let toast_ok = snap.notifications_ok;
     // A toast that Windows would hold back falls back to an overlay.
@@ -216,6 +280,11 @@ mod tests {
         vec![client("Jarna", 10, MON_L), client("Psianna", 20, MON_R)]
     }
 
+    /// The tests' alerts are own-name mentions, which default to a Beacon.
+    fn ov(anchor: Anchor) -> Delivery {
+        Delivery::Overlay { anchor, style: OverlayStyle::Beacon }
+    }
+
     fn only(d: &[Decision], name: &str) -> Outcome {
         d.iter().find(|d| d.pilot_name == name).unwrap().outcome.clone()
     }
@@ -225,7 +294,7 @@ mod tests {
         let s = snap(two(), Some("Jarna"));
         let d = route(&alert(&["Jarna", "Psianna"]), &s, &RouterConfig::default());
         assert_eq!(only(&d, "Jarna"), Outcome::Suppressed(SuppressedBy::FocusedPilot));
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Overlay { anchor: Anchor::Monitor(MON_R) }]));
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
     }
 
     #[test]
@@ -275,7 +344,7 @@ mod tests {
         let d = route(&alert(&["Psianna"]), &s, &RouterConfig::default());
         assert_eq!(
             only(&d, "Psianna"),
-            Outcome::Deliver(vec![Delivery::Overlay { anchor: Anchor::Monitor(MON_R) }]),
+            Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]),
             "falls back to the pilot's last known monitor"
         );
     }
@@ -285,8 +354,8 @@ mod tests {
         let mut clients = two();
         clients[0].rect = Some(Rect { left: -1500, top: 100, right: -300, bottom: 900 }); // Windowed
         let d = route(&alert(&["Jarna", "Psianna"]), &snap(clients, None), &RouterConfig::default());
-        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![Delivery::Overlay { anchor: Anchor::FollowWindow { hwnd: 10 } }]));
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Overlay { anchor: Anchor::Monitor(MON_R) }]));
+        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![ov(Anchor::FollowWindow { hwnd: 10 })]));
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
     }
 
     #[test]
@@ -295,7 +364,7 @@ mod tests {
         clients[1].minimized = true;
         clients[1].rect = None; // monitor stays: last known
         let d = route(&alert(&["Psianna"]), &snap(clients, Some("Jarna")), &RouterConfig::default());
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Overlay { anchor: Anchor::Monitor(MON_R) }]));
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
     }
 
     #[test]
@@ -308,7 +377,7 @@ mod tests {
         assert_eq!(
             only(&d, "Jarna"),
             Outcome::Deliver(vec![
-                Delivery::Overlay { anchor: Anchor::Monitor(MON_L) },
+                ov(Anchor::Monitor(MON_L)),
                 Delivery::Toast { switch_to: "Jarna".into() },
                 Delivery::Sound
             ])
@@ -320,6 +389,47 @@ mod tests {
     fn an_unknown_client_still_delivers_with_an_unknown_anchor() {
         let d = route(&alert(&["Ghost"]), &snap(two(), None), &RouterConfig::default());
         // Auto with clients on screen -> overlay; no client for this pilot -> unknown anchor.
-        assert_eq!(only(&d, "Ghost"), Outcome::Deliver(vec![Delivery::Overlay { anchor: Anchor::Unknown }]));
+        assert_eq!(only(&d, "Ghost"), Outcome::Deliver(vec![ov(Anchor::Unknown)]));
+    }
+
+    fn alert_with(reason: Reason, pilot: &str) -> Alert {
+        let mut a = alert(&[pilot]);
+        a.targets[0].reason = reason;
+        a
+    }
+
+    fn style_of(d: &[Decision]) -> OverlayStyle {
+        match &d[0].outcome {
+            Outcome::Deliver(v) => match &v[0] {
+                Delivery::Overlay { style, .. } => *style,
+                other => panic!("expected an overlay, got {other:?}"),
+            },
+            other => panic!("expected a delivery, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_style_follows_why_the_alert_fired() {
+        let s = snap(two(), None);
+        let cfg = RouterConfig::default();
+        let style = |r: Reason| style_of(&route(&alert_with(r, "Jarna"), &s, &cfg));
+        assert_eq!(style(Reason::OwnName), OverlayStyle::Beacon);
+        assert_eq!(style(Reason::Keyword("jita".into())), OverlayStyle::Panel);
+        assert_eq!(style(Reason::Regex("x".into())), OverlayStyle::Panel);
+        assert_eq!(style(Reason::AlwaysChannel("Fleet".into())), OverlayStyle::Strip);
+        assert_eq!(style(Reason::AlwaysSender("Boss".into())), OverlayStyle::Strip);
+    }
+
+    #[test]
+    fn styles_can_be_remapped_and_forced_per_pilot() {
+        let s = snap(two(), None);
+        let mut cfg = RouterConfig::default();
+        cfg.styles.keyword = OverlayStyle::Strip;
+        assert_eq!(style_of(&route(&alert_with(Reason::Keyword("k".into()), "Jarna"), &s, &cfg)), OverlayStyle::Strip);
+
+        cfg.set_pilot_style("psianna", OverlayStyle::Strip);
+        // Psianna is forced to Strip even for a mention; Jarna keeps the mapping.
+        assert_eq!(style_of(&route(&alert_with(Reason::OwnName, "Psianna"), &s, &cfg)), OverlayStyle::Strip);
+        assert_eq!(style_of(&route(&alert_with(Reason::OwnName, "Jarna"), &s, &cfg)), OverlayStyle::Beacon);
     }
 }

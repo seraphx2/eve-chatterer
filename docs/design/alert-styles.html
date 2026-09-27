@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alert overlay styles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --page: #0c1116;
+    --page-ink: #c5d2da;
+    --page-dim: #7e939f;
+
+    --glass-top: rgba(70, 96, 110, .80);
+    --glass-bottom: rgba(24, 43, 51, .90);
+    --edge: rgba(190, 215, 228, .16);
+    --edge-hi: rgba(220, 238, 246, .26);
+    --strip: rgba(120, 155, 172, .20);
+    --ink: #dbe5ea;
+    --ink-dim: #93a8b4;
+    --badge: #1d5f9f;
+    --badge-ink: #e8f3fb;
+
+    --mention: #e3a53a;
+    --keyword: #55c4d6;
+    --always: #6f9fe0;
+
+    --jarna: #62d1a5;
+    --psianna: #a58af0;
+
+    --font: "Barlow", "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--page); }
+  body {
+    margin: 0;
+    padding: 40px 24px 72px;
+    color: var(--page-ink);
+    font: 400 16px/1.55 var(--font);
+  }
+  main { max-width: 1040px; margin: 0 auto; }
+
+  h1 { font-weight: 300; font-size: 34px; line-height: 1.15; margin: 0 0 10px; color: #e8f0f4; }
+  h2 { font-weight: 500; font-size: 22px; margin: 0 0 4px; color: #e8f0f4; }
+  p { margin: 0; }
+  .lede { max-width: 62ch; color: var(--page-dim); }
+  .bar { display: flex; gap: 16px; align-items: center; margin: 22px 0 8px; }
+  button {
+    font: 500 14px var(--font);
+    color: var(--page-ink);
+    background: #16222b;
+    border: 1px solid var(--edge-hi);
+    padding: 7px 16px;
+    border-radius: 0;
+    cursor: pointer;
+  }
+  button:hover { background: #1c2c37; }
+  button:focus-visible { outline: 2px solid var(--keyword); outline-offset: 2px; }
+
+  section { margin-top: 56px; }
+  .when { max-width: 62ch; color: var(--page-dim); margin-bottom: 16px; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 14px; }
+  figure { margin: 0; }
+  figcaption { font-size: 14px; color: var(--page-dim); margin-top: 8px; }
+  .shows { margin-top: 14px; font-size: 14px; color: var(--page-dim); max-width: 70ch; }
+  .shows b { color: var(--page-ink); font-weight: 500; }
+
+  /* A slice of a 1080p screen behind the overlay, drawn at actual pixel size. */
+  .stage {
+    position: relative;
+    height: 232px;
+    overflow: hidden;
+    border: 1px solid #1a2630;
+    background:
+      radial-gradient(1px 1px at 12% 22%, #b9d2e0 60%, transparent 61%),
+      radial-gradient(1px 1px at 31% 71%, #8fb0c4 60%, transparent 61%),
+      radial-gradient(1.4px 1.4px at 47% 34%, #cfe2ee 60%, transparent 61%),
+      radial-gradient(1px 1px at 63% 82%, #9bb9cb 60%, transparent 61%),
+      radial-gradient(1px 1px at 78% 18%, #b9d2e0 60%, transparent 61%),
+      radial-gradient(1.4px 1.4px at 90% 58%, #cfe2ee 60%, transparent 61%),
+      radial-gradient(60% 90% at 20% 110%, rgba(38, 74, 104, .55), transparent 70%),
+      radial-gradient(50% 80% at 88% -10%, rgba(88, 62, 40, .35), transparent 70%),
+      linear-gradient(180deg, #0a1017, #101a24);
+  }
+  .stage > * { position: absolute; left: 50%; translate: -50% 0; }
+
+  /* ---------- shared pieces ---------- */
+  .glass {
+    background: linear-gradient(165deg, var(--glass-top), var(--glass-bottom));
+    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 6px 22px rgba(0, 0, 0, .35);
+    color: var(--ink);
+  }
+  b { font-weight: 500; }
+  .badge {
+    display: inline-grid;
+    place-items: center;
+    min-width: 22px;
+    height: 20px;
+    padding: 0 6px;
+    font: 600 12px/1 var(--font);
+    color: var(--badge-ink);
+    background: linear-gradient(180deg, #2872b8, var(--badge));
+    box-shadow: inset 0 0 0 1px rgba(160, 205, 245, .35);
+  }
+  /* The lifetime meter: the reference's three segments, draining one at a time. */
+  .life { display: flex; gap: 2px; }
+  .life i { display: block; width: 36px; height: 3px; background: #e6eef2; transform-origin: left; }
+  .rest .life i:nth-child(3) { transform: scaleX(.45); }
+
+  @keyframes arrive { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  @keyframes drain { to { transform: scaleX(0); } }
+  @keyframes pulse {
+    0% { box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 0 0 var(--glow), 0 6px 22px rgba(0,0,0,.35); }
+    35% { box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 26px 2px var(--glow), 0 6px 22px rgba(0,0,0,.35); }
+    100% { box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 0 0 var(--glow), 0 6px 22px rgba(0,0,0,.35); }
+  }
+  .play .alert { animation: arrive 240ms ease-out both; }
+  .play .alert:nth-of-type(2) { animation-delay: 140ms; }
+  .play .alert:nth-of-type(3) { animation-delay: 280ms; }
+  .play .life i { animation: drain 2s linear forwards; }
+  .play .life i:nth-child(2) { animation-delay: 2s; }
+  .play .life i:nth-child(3) { animation-delay: 4s; }
+  .play .beacon { animation: arrive 240ms ease-out both, pulse 900ms ease-out 240ms 1; }
+
+  /* ---------- 1. Panel ---------- */
+  .panel { width: 420px; top: 30px; --accent: var(--mention); }
+  .panel .notch {
+    position: absolute; top: -1px; left: 50%; translate: -50% 0;
+    width: 64px; height: 2px; background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+  }
+  .panel header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 6px 12px; background: var(--strip);
+    font: 400 12px/1.2 var(--font); color: var(--ink-dim);
+    box-shadow: inset 0 -1px 0 var(--edge);
+  }
+  .panel header .pilot { color: var(--ink); font-weight: 500; }
+  .panel .text { padding: 10px 12px 4px; font-size: 15px; line-height: 1.4; font-weight: 300; }
+  .panel .text b { font-weight: 500; margin-right: 6px; }
+  .panel .why { padding: 0 12px; font-size: 12px; color: var(--accent); }
+  .panel footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 12px; }
+  .panel.stack { top: 24px; }
+
+  /* ---------- 2. Strip ---------- */
+  .strip {
+    width: 420px; height: 34px; top: 30px;
+    display: grid; grid-template-columns: 26px auto 1fr auto; align-items: center; gap: 8px;
+    padding: 0 8px 0 0;
+    border-left: 3px solid var(--pilot);
+    font-size: 14px; font-weight: 300;
+  }
+  .strip .chip {
+    height: 100%; display: grid; place-items: center;
+    font: 600 13px var(--font); color: var(--pilot);
+    background: color-mix(in srgb, var(--pilot) 14%, transparent);
+  }
+  .strip .chan { color: var(--ink-dim); font-size: 12px; }
+  .strip .msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .strip .msg b { margin-right: 6px; }
+  .strip.dim { opacity: .72; }
+
+  /* ---------- 3. Beacon ---------- */
+  .beacon {
+    width: 460px; top: 26px;
+    border-left: 4px solid var(--accent);
+    --glow: color-mix(in srgb, var(--accent) 55%, transparent);
+    padding: 12px 16px 12px 14px;
+  }
+  .beacon .top { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--ink-dim); }
+  .beacon .top .why { color: var(--accent); font-weight: 500; }
+  .beacon .sender { font-size: 20px; font-weight: 500; line-height: 1.2; margin-top: 6px; }
+  .beacon .body { font-size: 15px; font-weight: 300; line-height: 1.4; margin-top: 2px;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .beacon .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .play .alert, .play .beacon, .play .life i { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Alert overlay styles</h1>
+  <p class="lede">Three ways an alert can look over EVE, drawn from your Drones window: translucent steel glass, sharp corners, thin type, and the three-segment bar. Everything is shown at actual size on a 1920 x 1080 screen. These windows are click-through, so none of them has a button; anything you would click belongs in a Windows notification.</p>
+  <div class="bar"><button id="replay" type="button">Replay</button></div>
+
+  <!-- ============ 1 ============ -->
+  <section id="panel">
+    <h2>Panel</h2>
+    <p class="when">The closest match to EVE's own windows. One alert at a time, with room for the reason. Best for mentions and for quiet channels.</p>
+    <div class="pair">
+      <figure>
+        <div class="stage play">
+          <article class="alert glass panel" style="--accent: var(--mention)">
+            <span class="notch"></span>
+            <header><span class="pilot">Jarna</span><span>Local</span></header>
+            <p class="text"><b>Rilakss</b>Jarna, are you on for the fleet tonight?</p>
+            <p class="why">Mentioned you</p>
+            <footer><div class="life"><i></i><i></i><i></i></div></footer>
+          </article>
+        </div>
+        <figcaption>One line, for Jarna. The notch and the reason take the color of why it fired.</figcaption>
+      </figure>
+      <figure>
+        <div class="stage play">
+          <article class="alert glass panel" style="--accent: var(--keyword)">
+            <span class="notch"></span>
+            <header><span class="pilot">Psianna Archeia</span><span>Local</span></header>
+            <p class="text"><b>Mr Nodes</b>HyperNet offer: Zirnitra 4/8 cheap nodes</p>
+            <p class="why">Keyword: hypernet</p>
+            <footer><div class="life"><i></i><i></i><i></i></div><span class="badge">6</span></footer>
+          </article>
+        </div>
+        <figcaption>A busy channel. The blue badge counts lines folded into this alert.</figcaption>
+      </figure>
+    </div>
+    <p class="shows"><b>Shows:</b> pilot, channel, sender, message, why it fired, time left, and the fold count. About 420 x 118 px.</p>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section id="strip">
+    <h2>Strip</h2>
+    <p class="when">A single line that takes almost no screen. Made for noisy channels and for people who want to keep their eyes on the fight; several can stack without covering anything.</p>
+    <div class="pair">
+      <figure>
+        <div class="stage play">
+          <div class="alert glass strip" style="--pilot: var(--jarna)">
+            <span class="chip">J</span><span class="chan">Local</span>
+            <span class="msg"><b>Rilakss</b>Jarna, are you on for the fleet tonight?</span>
+          </div>
+        </div>
+        <figcaption>The colored edge and initial say which pilot it is for.</figcaption>
+      </figure>
+      <figure>
+        <div class="stage play">
+          <div class="alert glass strip" style="--pilot: var(--psianna); top: 30px">
+            <span class="chip">P</span><span class="chan">Local</span>
+            <span class="msg"><b>Mr Nodes</b>HyperNet offer: Zirnitra 4/8 cheap nodes</span>
+            <span class="badge">6</span>
+          </div>
+          <div class="alert glass strip" style="--pilot: var(--jarna); top: 70px">
+            <span class="chip">J</span><span class="chan">Corp</span>
+            <span class="msg"><b>Ceryph</b>Anyone up for a mining op?</span>
+          </div>
+          <div class="alert glass strip dim" style="--pilot: var(--jarna); top: 110px">
+            <span class="chip">J</span><span class="chan">Local</span>
+            <span class="msg"><b>Bob</b>selling in Jita 4-4</span>
+          </div>
+        </div>
+        <figcaption>Three at once. Older lines dim, and a repeat folds into a badge.</figcaption>
+      </figure>
+    </div>
+    <p class="shows"><b>Shows:</b> pilot, channel, sender, message (one line, cut with an ellipsis), and the fold count. No reason label and no meter; it disappears on a short timer. About 420 x 34 px each.</p>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section id="beacon">
+    <h2>Beacon</h2>
+    <p class="when">For the alerts you must not miss. Larger type, a wider frame, and one soft pulse on arrival. Use it for mentions and for channels you mark as always-alert, and keep the rest on Panel or Strip.</p>
+    <div class="pair">
+      <figure>
+        <div class="stage play">
+          <article class="alert glass beacon" style="--accent: var(--mention)">
+            <div class="top"><span class="why">Mentioned you</span><span>Jarna in Local</span></div>
+            <p class="sender">Rilakss</p>
+            <p class="body">Jarna, are you on for the fleet tonight? We are forming up in Jita at 20:00 and we need a logi.</p>
+            <div class="foot"><div class="life"><i></i><i></i><i></i></div></div>
+          </article>
+        </div>
+        <figcaption>The sender leads. The message keeps up to three lines.</figcaption>
+      </figure>
+      <figure>
+        <div class="stage play">
+          <article class="alert glass beacon" style="--accent: var(--always)">
+            <div class="top"><span class="why">Always alert: Fleet</span><span>Psianna Archeia in Fleet</span></div>
+            <p class="sender">FC Voss</p>
+            <p class="body">Align to the gate. Primary is the Loki, broadcast for reps.</p>
+            <div class="foot"><div class="life"><i></i><i></i><i></i></div><span class="badge">3</span></div>
+          </article>
+        </div>
+        <figcaption>A channel rule. The edge and glow use the rule's color.</figcaption>
+      </figure>
+    </div>
+    <p class="shows"><b>Shows:</b> why it fired, pilot and channel, sender, up to three lines of message, time left, and the fold count. About 460 x 150 px.</p>
+  </section>
+</main>
+
+<script>
+  const stages = document.querySelectorAll('.stage');
+  let timer;
+  function play() {
+    clearTimeout(timer);
+    stages.forEach(s => { s.classList.remove('play', 'rest'); });
+    void document.body.offsetWidth; // restart the animations
+    stages.forEach(s => s.classList.add('play'));
+    // After the meter has run out, hold a frozen mid-life frame so the layout stays readable.
+    timer = setTimeout(() => stages.forEach(s => { s.classList.remove('play'); s.classList.add('rest'); }), 6800);
+  }
+  document.getElementById('replay').addEventListener('click', play);
+  play();
+</script>
+</body>
+</html>

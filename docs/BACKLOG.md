@@ -7,6 +7,12 @@
 - Test OneDrive placeholder behavior safely (attribute check before opening; never hydrate files only to adopt them).
 - Spike the interactive WinRT toast (buttons, deep link into a pilot's settings) from the NSIS-installed build; needs an app user model id.
 
+## Overlay design (see DESIGN.md "Overlay styles")
+- Owner to confirm the default style mapping and the sizes/lifetimes; adjust `docs/design/alert-styles.html` and `StyleMap` defaults if they change.
+- Burst folding in the overlay manager: thresholds (for example more than N alerts in M seconds fold to a Strip stack), stack limit per monitor, ordering (Beacon on top).
+- Bundle Barlow with the app (the mockup loads it from Google Fonts).
+- Optional frosted glass through Windows acrylic on the overlay window; check its GPU cost over EVE first.
+
 ## Open questions
 - Are chat log headers localized on non-English clients? Plan: read the header by position (channel id, name, listener, start time) with keys as a check; find a non-English sample.
 - Is the launcher-provided character selection ever visible without the log? (No: window title gives the name, the log gives the id.)
