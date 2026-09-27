@@ -98,6 +98,23 @@ Shared details: the **lifetime meter** is three segments that drain in turn; the
 
 Style choice: `router::StyleMap` maps the reason to a style (mention Beacon, keyword/regex Panel, always Strip) with a per-pilot override; both are settings. Burst folding (a fast run of alerts collapses into a Strip stack with a count badge) needs memory of recent alerts, so it lives in the overlay manager, not the pure router. A Beacon takes the top of the stack with Strips beneath; lifetime can differ per style (Beacon longest).
 
+## Granular settings (requirement, model proposed, not yet built)
+
+Owner requirement: decisions per channel and per character, because different characters have different jobs and their tolerance for "annoyance" differs. Today the core has one default `RuleSet`, per-pilot overrides in `RuleBook`, and per-pilot delivery/suppression/style in `RouterConfig`; these are meant to become one layered tree.
+
+Proposed model: every setting is optional at each level and inherits downward.
+```
+global defaults
+  channel override         (any pilot, this channel)
+  pilot                    (this character, any channel)
+    pilot + channel        (most specific)
+```
+Two kinds of setting:
+- **Preferences** (what and how: rules/keywords, style, delivery mode, sound, lifetime, suppression): the most specific level that sets one wins. Open question: when pilot and channel disagree, the proposal is that the channel wins (it expresses content), with pilot + channel above both.
+- **Limits** (annoyance ceilings: rate cap per minute, per-sender/channel cooldown, minimum priority): applied at every level, so a channel-level "always alert" cannot exceed a pilot's cap. A capped alert is dropped or folded into the count badge (configurable).
+
+Candidate annoyance controls per pilot and per channel: mute / mentions only / everything matching; rate cap and what happens over it; repeat suppression (same sender and text within N seconds); sound on/off and volume; overlay lifetime and maximum stack; behavior when away. First to ship (owner to confirm): mute or mentions-only, rate cap, sound on/off. Settings UI implication: a pilots x channels matrix that shows inherited values in a muted color and overrides in full color.
+
 ## Rules UX
 
 A few first-class rules (name mention, keywords, per-channel) with regex behind an "advanced" toggle.
