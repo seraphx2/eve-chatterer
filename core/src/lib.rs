@@ -1,5 +1,6 @@
 //! EVE chat notifier core: log tracking, rules, presence and the alert router. No UI.
 
+pub mod channel;
 pub mod engine;
 pub mod liveset;
 pub mod logfmt;

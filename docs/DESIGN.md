@@ -102,12 +102,15 @@ Style choice: `router::StyleMap` maps the reason to a style (mention Beacon, key
 
 Owner requirement: decisions per channel and per character, because different characters have different jobs and their tolerance for "annoyance" differs. Today the core has one default `RuleSet`, per-pilot overrides in `RuleBook`, and per-pilot delivery/suppression/style in `RouterConfig`; these are meant to become one layered tree.
 
+Channels come in kinds, classified from the header channel id (`core/src/channel.rs`, FINDINGS #3): **fixed** (Local, Corp), **situational** (Alliance while in an alliance, Fleet while in a fleet), **public** (CCP's and player-made, stable id), and **private messages**. Fleet and private ids are new every time, so they can only be configured as a kind ("all fleets", "all private messages"); Local, Corp and public channels have stable ids and public ones can also be configured individually by id (shown by name).
+
 Proposed model: every setting is optional at each level and inherits downward.
 ```
 global defaults
-  channel override         (any pilot, this channel)
+  channel kind             (all private messages, all fleets, Local, Corp, Alliance, public)
+  channel                  (one public channel by id, e.g. EVE University)
   pilot                    (this character, any channel)
-    pilot + channel        (most specific)
+    pilot + kind / channel (most specific)
 ```
 Two kinds of setting:
 - **Preferences** (what and how: rules/keywords, style, delivery mode, sound, lifetime, suppression): the most specific level that sets one wins. Open question: when pilot and channel disagree, the proposal is that the channel wins (it expresses content), with pilot + channel above both.

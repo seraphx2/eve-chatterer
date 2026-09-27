@@ -267,6 +267,7 @@ mod tests {
         Alert {
             channel_id: "local".into(),
             channel_name: "Local".into(),
+            kind: crate::channel::ChannelKind::Local,
             line: ChatLine { stamp: Stamp(0), sender: "Bob".into(), text: "hi".into() },
             targets: targets
                 .iter()

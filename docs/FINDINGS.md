@@ -36,6 +36,8 @@ Cost scales with polled (character, channel) pairs, about 0.05 ms/s each, not wi
 - Encoding UTF-16LE with a BOM at file start **and a BOM before every line**. Lines end with CRLF. In-line timestamps `[ YYYY.MM.DD HH:MM:SS ]` are UTC.
 - Header order: `Channel ID`, `Channel Name`, `Listener`, `Session started`; header keys were English on this (English) client. Localization is unverified.
 - Two characters in the same channel write the same lines to separate files; a line near a second boundary can carry stamps one second apart in the two files (seen for Jita Local). Cross-character dedupe must tolerate this.
+- Channel ids carry a prefix that identifies the kind (headers of real logs): `local`, `corp`, `fleet_1368512310460` (Fleet; a new id per fleet), `private_<32 hex>` (private chat, named "Private Chat (N)", a new id per conversation), `system_263238_263361` (public channel; "EVE University", the id is stable and the header name matches the in-game name). Alliance has not been observed (the owner is not in an alliance); `alliance` is an assumption. Unknown prefixes classify as `Unknown` (see `core/src/channel.rs`). Fleet and private ids are ephemeral, so only their kind can be configured; the other kinds have stable ids.
+- The old EveChatNotifier parsed the channel id and never used it; it matched channels by name only.
 - Login MOTD lines come from sender `EVE System`.
 - Pilot join/leave and arrivals are not logged.
 

@@ -6,6 +6,7 @@
 //! layer above, which knows about windows; an `Alert` carries everything that
 //! decision needs (who matched, which characters' logs contained the line).
 
+use crate::channel::{classify, ChannelKind};
 use crate::liveset::{Discovery, LiveConfig, LiveSet};
 use crate::logfmt::ChatLine;
 use crate::merge::{Listener, MergedLine, Merger};
@@ -55,6 +56,8 @@ pub struct AlertTarget {
 pub struct Alert {
     pub channel_id: String,
     pub channel_name: String,
+    /// What kind of channel this is (from the id; see `channel`).
+    pub kind: ChannelKind,
     pub line: ChatLine,
     /// The characters whose rules matched.
     pub targets: Vec<AlertTarget>,
@@ -224,7 +227,8 @@ impl Engine {
         if targets.is_empty() {
             return None;
         }
-        Some(Alert { channel_id: m.channel_id, channel_name: m.channel_name, line: m.line, targets, seen_by: m.seen_by })
+        let kind = classify(&m.channel_id, &m.channel_name);
+        Some(Alert { channel_id: m.channel_id, channel_name: m.channel_name, kind, line: m.line, targets, seen_by: m.seen_by })
     }
 }
 

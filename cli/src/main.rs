@@ -114,7 +114,15 @@ fn delivery(d: &Delivery) -> String {
 
 fn print_alert(a: &Alert, decisions: &[Decision]) {
     let viewers: Vec<&str> = a.seen_by.iter().map(|l| l.name.as_str()).collect();
-    println!("[{}] ALERT  {}  {}: {}   (seen by: {})", clock(), a.channel_name, a.line.sender, a.line.text, viewers.join(", "));
+    println!(
+        "[{}] ALERT  {} ({:?})  {}: {}   (seen by: {})",
+        clock(),
+        a.channel_name,
+        a.kind,
+        a.line.sender,
+        a.line.text,
+        viewers.join(", ")
+    );
     for d in decisions {
         let what = match &d.outcome {
             Outcome::Suppressed(SuppressedBy::FocusedPilot) => "suppressed (you are on this client)".to_string(),
