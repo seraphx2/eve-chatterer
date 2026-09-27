@@ -105,6 +105,7 @@ struct Runner {
     governor: Governor,
     router_cfg: RouterConfig,
     pilots_path: PathBuf,
+    last_client_log: Option<Instant>,
 }
 
 pub fn spawn(app: AppHandle) {
@@ -146,6 +147,7 @@ fn run(app: AppHandle) -> Result<(), String> {
         router_cfg: RouterConfig::default(),
         pilots_path,
         app,
+        last_client_log: None,
     };
     r.run_loop()
 }
@@ -159,6 +161,10 @@ impl Runner {
             if last_tick.is_none_or(|t| now.duration_since(t) >= TICK_EVERY) {
                 last_tick = Some(now);
                 let names: Vec<&str> = snap.clients.iter().map(|c| c.character.as_str()).collect();
+                if self.last_client_log.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(30)) {
+                    self.last_client_log = Some(now);
+                    println!("clients: {}  focused: {:?}", snap.clients.iter().map(|c| format!("{}[{}]", c.character, if c.on_screen() {"on-screen"} else if c.minimized {"minimized"} else {"hidden"})).collect::<Vec<_>>().join(", "), snap.focused);
+                }
                 let mut events = self.engine.observe_clients(&names, now);
                 events.extend(self.engine.tick(now));
                 for ev in events {
@@ -183,8 +189,17 @@ impl Runner {
     fn handle(&mut self, ev: Event, snap: &Snapshot, now: Instant) {
         match ev {
             Event::Alert(a) => {
+                println!(
+                    "ALERT  {} ({:?})  {}: {}   seen by: {}",
+                    a.channel_name,
+                    a.kind,
+                    a.line.sender,
+                    a.line.text,
+                    a.targets.iter().map(|t| t.pilot_name.as_str()).collect::<Vec<_>>().join(", ")
+                );
                 let decisions = self.governor.apply(router::route(&a, snap, &self.router_cfg), now);
                 for d in &decisions {
+                    println!("       {} ({:?}) -> {:?}", d.pilot_name, d.reason, d.outcome);
                     self.deliver(&a, d, snap);
                 }
             }
@@ -213,7 +228,11 @@ impl Runner {
                 for delivery in deliveries {
                     match delivery {
                         Delivery::Overlay { anchor, style } => {
-                            let Some((monitor, region)) = placement(&self.app, *anchor, snap) else { continue };
+                            let Some((monitor, region)) = placement(&self.app, *anchor, snap) else {
+                                println!("       could not place the overlay: anchor={anchor:?} had no monitor");
+                                continue;
+                            };
+                            println!("       showing {style:?} on monitor ({},{})-({},{})", monitor.left, monitor.top, monitor.right, monitor.bottom);
                             let (reason, tone) = reason_text(&d.reason);
                             state.overlays.show(
                                 &self.app,

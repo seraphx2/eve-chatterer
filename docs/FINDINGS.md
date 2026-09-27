@@ -99,6 +99,23 @@ GPU utilization from the `\GPU Engine(*)\Utilization Percentage` counters (must 
 - EVE's own GPU load swings by 10+ points on its own (54%, 75% and 67% baselines seen in different runs, a baseline stdev of 9.9), which is larger than any overlay effect we could resolve. **Frame time was not measured** (needs a present-level tool such as PresentMon); GPU utilization showed no consistent effect on EVE.
 - Whether overlay presence alone costs the compositor anything is unresolved (stepped/off vs no overlay was -2.6 and +7.3 points, inside the noise). A cleaner test needs both clients in a static scene.
 
+## 10. Live verification of the full app against real chat (2026-09-27)
+
+With `eve-chatterer-app` running in `tauri dev` against the owner's real Chatlogs folder (not a synthetic feeder), each real chat line was checked against the app's console diagnostics (added this session: `runner.rs` logs every `Event::Alert` and its routing decision; `overlay.rs` logs window create/reuse/ready/emit).
+
+| Test | Channel kind | Result |
+|---|---|---|
+| Own name typed by the other character | Local | Correct: Beacon, routed to the named pilot's monitor, suppressed for neither (typer was focused, target wasn't) |
+| Private message | Private | Correct: fired on every line (mode `Everything`), Beacon |
+| Fleet chat, no name/keyword in the text | Fleet | Correct once the default style was fixed (see below) |
+| Corp chat, no name/keyword | Corp | Correctly **silent** — the two characters turned out to be in different corporations, so it never appeared in the other's log at all. Confirmed by reading both real Corp headers (`Channel changed to Corp : Sukebe Corporation` vs `... Probe Launcher Offline`). This is a true negative, not a miss: the engine only evaluates a line for pilots whose own log actually contains it. |
+
+Two real bugs found this way, both fixed same day:
+1. The very first alert test (a Local mention) produced no visible overlay, with no diagnostics yet in place to explain why; every later attempt worked once logging was added. Root cause unconfirmed — most likely a presence-sampling or cold-start artifact on that one instance, not a reproducible defect (see BACKLOG).
+2. Fleet/Corp/Alliance defaulted to the `Strip` style (mode `Everything`'s reason maps to `Strip` in the router's style map), which a live Fleet alert showed was too subtle to reliably notice: 34px, 6 s, no animation beyond a fade. Changed their default style to `Panel` (9 s, larger, shows the reason). Beacon (mentions) was unaffected and remains the most visible tier.
+
+Alliance itself was never observed directly (the owner is not in an alliance); its channel id (`alliance`) was confirmed separately from a third party's real log header (docs/FINDINGS.md #3), and its settings defaults are kept identical to Corp by a standing rule (docs/DESIGN.md), so its correctness rests on Corp's proven code path plus that one header confirmation, not on a live alert.
+
 ## Corrections log (things believed early that were wrong)
 
 - "EVE's GPU rose by about 18 points while overlays animated" (first GPU run, 54% to 72%): not supported. The A/B runs showed EVE's own load varies by more than that with no overlay; the consistent effect is on dwm.exe and it comes from continuous animation.

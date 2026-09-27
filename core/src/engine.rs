@@ -254,6 +254,7 @@ mod tests {
         match channel {
             "Local" => "local",
             "Corp" => "corp",
+            "Fleet" => "fleet_1063112310668",
             c if c.starts_with("Private") => "private_92740cb0b9ee11f19b5a3a68dd86f9e7",
             _ => "system_1_2",
         }
@@ -390,21 +391,25 @@ mod tests {
     }
 
     #[test]
-    fn the_kind_defaults_apply_every_private_line_but_only_matches_elsewhere() {
+    fn the_kind_defaults_apply_every_private_and_fleet_line_but_only_matches_in_local() {
         let dir = tempfile::tempdir().unwrap();
         let pm = session(dir.path(), "Private Chat (2)", "1", "Jarna");
-        let corp = session(dir.path(), "Corp", "1", "Jarna");
+        let fleet = session(dir.path(), "Fleet", "1", "Jarna");
+        let local = session(dir.path(), "Local", "1", "Jarna");
         let mut e = engine_with(dir.path(), Settings::with_defaults());
         let t0 = Instant::now();
         e.tick(t0);
         append(&pm, &line("2026.09.26 10:00:05", "Friend", "got a sec?")); // no keyword, no name
-        append(&corp, &line("2026.09.26 10:00:06", "Boss", "meeting soon")); // no keyword, no name
+        append(&fleet, &line("2026.09.26 10:00:06", "FC", "align to the gate")); // no keyword, no name
+        append(&local, &line("2026.09.26 10:00:07", "Bob", "selling stuff")); // no keyword, no name
         let ev = e.tick(t0 + Duration::from_millis(500));
         let got = alerts(&ev);
-        assert_eq!(got.len(), 1, "only the private message alerts: {ev:?}");
+        assert_eq!(got.len(), 2, "the private message and the fleet callout alert; plain Local chatter does not: {ev:?}");
         assert_eq!(got[0].kind, ChannelKind::Private);
         assert!(matches!(got[0].targets[0].reason, Reason::AlwaysChannel(_)));
         assert_eq!(got[0].targets[0].prefs.style, Some(crate::prefs::OverlayStyle::Beacon));
+        assert_eq!(got[1].kind, ChannelKind::Fleet);
+        assert!(matches!(got[1].targets[0].reason, Reason::AlwaysChannel(_)));
     }
 
     #[test]
@@ -414,7 +419,7 @@ mod tests {
         let b = session(dir.path(), "Private Chat (2)", "2", "Psianna Archeia");
         let mut settings = Settings::with_defaults();
         // Psianna mutes private messages: her job is scouting, not chat.
-        settings.pilots.entry("2".into()).or_default().kinds.insert(ChannelKind::Private, Layer { mode: Some(Mode::Mute), ..Layer::default() });
+        settings.pilots.entry("2".into()).or_default().kinds.insert(ChannelKind::Private, Layer { mode: Some(Mode::Nothing), ..Layer::default() });
         let mut e = engine_with(dir.path(), settings);
         let t0 = Instant::now();
         e.tick(t0);

@@ -4,16 +4,22 @@
 use crate::channel::ChannelKind;
 use serde::{Deserialize, Serialize};
 
-/// Which lines of a channel can alert at all.
+/// Which lines of a channel can alert at all, named after Discord's own
+/// per-channel notification levels (owner decision 2026-09-27).
+///
+/// Keyword/regex/always-alert-sender tracking (`RuleSet::keywords` etc.) is a
+/// **separate, always-on layer, not a fourth value here** (owner correction
+/// the same day: "Matching is a parallel concept... it works independently,
+/// alongside the others"). It is checked under every mode, `Nothing` included
+/// — muting a channel for general chatter must not silence something you
+/// explicitly asked to be told about. See `rules::CompiledRules::evaluate_mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
-    /// Never alert.
-    Mute,
-    /// Only when the listening pilot's own name is mentioned.
-    MentionsOnly,
-    /// Alert on whatever the rules (own name, keywords, regexes, senders) match.
-    Matching,
+    /// No alert from ordinary chatter (tracked keywords/senders still fire).
+    Nothing,
+    /// The listening pilot's own name (plus tracked keywords/senders).
+    Mentions,
     /// Alert on every line (except your own messages, system messages and ignored senders).
     Everything,
 }

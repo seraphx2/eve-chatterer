@@ -68,10 +68,14 @@ fn label_for(monitor: &Rect) -> String {
 }
 
 fn send(app: &AppHandle, label: &str, msg: &Msg) {
-    let _ = match msg {
+    let r = match msg {
         Msg::Alert(a) => app.emit_to(label, "overlay:alert", a),
         Msg::Fold(f) => app.emit_to(label, "overlay:fold", f),
     };
+    match r {
+        Ok(()) => println!("       [overlay] emitted to {label}"),
+        Err(e) => println!("       [overlay] emit_to {label} FAILED: {e}"),
+    }
 }
 
 impl Overlays {
@@ -91,7 +95,8 @@ impl Overlays {
     /// monitor itself, or a client window's bounds).
     pub fn show(&self, app: &AppHandle, monitor: Rect, region: Rect, alert: OverlayAlert) {
         let label = label_for(&monitor);
-        if !self.slots.lock().unwrap().contains_key(&label) {
+        let existed = self.slots.lock().unwrap().contains_key(&label);
+        if !existed {
             // Built outside the lock: creating a window pumps the UI thread.
             let started = Instant::now();
             match create(app, &label) {
@@ -108,20 +113,34 @@ impl Overlays {
                     }
                 }
                 Err(e) => {
-                    eprintln!("could not create overlay window {label}: {e}");
+                    println!("       [overlay] could not create window {label}: {e}");
                     return;
                 }
             }
         }
         let mut slots = self.slots.lock().unwrap();
-        let Some(slot) = slots.get_mut(&label) else { return };
+        let Some(slot) = slots.get_mut(&label) else {
+            println!("       [overlay] {label}: slot vanished right after creation");
+            return;
+        };
         place(app, &slot.window, &monitor, &region);
+        let visible = slot.window.is_visible().unwrap_or(false);
         platform::show_without_activating(&slot.window);
+        println!(
+            "       [overlay] {label} {} (was visible: {visible}, ready: {}), placed at region ({},{})-({},{})",
+            if existed { "reused" } else { "created" },
+            slot.ready,
+            region.left,
+            region.top,
+            region.right,
+            region.bottom
+        );
         slot.last_used = Instant::now();
         let msg = Msg::Alert(alert);
         if slot.ready {
             send(app, &label, &msg);
         } else {
+            println!("       [overlay] {label}: not ready yet, queuing (queue len will be {})", slot.queue.len() + 1);
             slot.queue.push(msg);
         }
     }

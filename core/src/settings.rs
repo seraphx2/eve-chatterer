@@ -97,21 +97,32 @@ pub struct Resolved {
 }
 
 impl Settings {
-    /// Defaults by channel kind. These are proposals for the owner to tune:
-    /// a private message is addressed to you, so every line alerts as a
-    /// Beacon; the chatty kinds (Local, Alliance, public channels) are capped
-    /// and fold into the count badge past the cap.
+    /// Defaults by channel kind. These are proposals for the owner to tune.
+    /// Private messages, Fleet and Corp are addressed to, or shared with, a
+    /// small circle on purpose, so every line is worth seeing without needing
+    /// a keyword; Fleet and Corp can still get busy, so they carry a cap.
+    /// Local, Alliance and public channels are full of strangers, so they stay
+    /// mention/keyword only, and are capped and fold into the count badge.
     pub fn with_defaults() -> Settings {
         let cap = |n: u32| Layer { rate_cap: Some(RateCap { per_minute: n, over: OverCap::Fold }), ..Layer::default() };
+        let everything = |cap_per_min: Option<u32>, style: Option<OverlayStyle>| Layer {
+            mode: Some(Mode::Everything),
+            style,
+            rate_cap: cap_per_min.map(|n| RateCap { per_minute: n, over: OverCap::Fold }),
+            ..Layer::default()
+        };
         let mut s = Settings::default();
         s.kinds.insert(ChannelKind::Local, cap(6));
-        s.kinds.insert(ChannelKind::Alliance, cap(6));
         s.kinds.insert(ChannelKind::Public, cap(4));
         s.kinds.insert(ChannelKind::Unknown, cap(4));
-        s.kinds.insert(
-            ChannelKind::Private,
-            Layer { mode: Some(Mode::Everything), style: Some(OverlayStyle::Beacon), ..Layer::default() },
-        );
+        s.kinds.insert(ChannelKind::Private, everything(None, Some(OverlayStyle::Beacon)));
+        s.kinds.insert(ChannelKind::Fleet, everything(Some(6), Some(OverlayStyle::Panel)));
+        // Corp and Alliance are the same relationship at a different scope
+        // (owner decision 2026-09-27: any future change to Corp's defaults
+        // applies to Alliance too), so they always get identical values.
+        for org in [ChannelKind::Corp, ChannelKind::Alliance] {
+            s.kinds.insert(org, everything(Some(6), Some(OverlayStyle::Panel)));
+        }
         s
     }
 
@@ -142,7 +153,7 @@ impl Settings {
     }
 
     pub fn resolve(&self, pilot_id: Option<&str>, kind: ChannelKind, channel_id: &str) -> Resolved {
-        let mut mode = Mode::Matching;
+        let mut mode = Mode::Mentions;
         let mut rules = RuleSet::default();
         let mut prefs = Prefs::default();
         for (key, l) in self.layers(pilot_id, kind, channel_id) {
@@ -314,8 +325,8 @@ mod tests {
         assert_eq!(r.prefs.style, Some(OverlayStyle::Beacon));
         assert!(r.prefs.sound);
         // And the pilot can override the kind default deliberately.
-        s.pilots.get_mut("1").unwrap().kinds.insert(ChannelKind::Private, Layer { mode: Some(Mode::MentionsOnly), ..Layer::default() });
-        assert_eq!(s.resolve(Some("1"), ChannelKind::Private, "private_abc").mode, Mode::MentionsOnly);
+        s.pilots.get_mut("1").unwrap().kinds.insert(ChannelKind::Private, Layer { mode: Some(Mode::Mentions), ..Layer::default() });
+        assert_eq!(s.resolve(Some("1"), ChannelKind::Private, "private_abc").mode, Mode::Mentions);
         assert_eq!(s.resolve(Some("2"), ChannelKind::Private, "private_abc").mode, Mode::Everything);
     }
 
@@ -324,8 +335,19 @@ mod tests {
         let s = Settings::with_defaults();
         let priv_ = s.resolve(None, ChannelKind::Private, "private_x");
         assert_eq!((priv_.mode, priv_.prefs.style), (Mode::Everything, Some(OverlayStyle::Beacon)));
-        assert_eq!(s.resolve(None, ChannelKind::Corp, "corp").mode, Mode::Matching);
-        assert!(s.resolve(None, ChannelKind::Corp, "corp").prefs.caps.is_empty());
+        assert!(priv_.prefs.caps.is_empty(), "a private conversation is not capped");
+
+        // Fleet, Corp and Alliance: every line as a Panel (visible, but not as
+        // loud as a mention), capped since they can still get busy. Corp and
+        // Alliance are deliberately identical (same relationship, different scope).
+        for kind in [ChannelKind::Fleet, ChannelKind::Corp, ChannelKind::Alliance] {
+            let r = s.resolve(None, kind, "irrelevant-for-these-kinds");
+            assert_eq!(r.mode, Mode::Everything, "{kind:?}");
+            assert_eq!(r.prefs.style, Some(OverlayStyle::Panel), "{kind:?}");
+            assert_eq!(r.prefs.caps, vec![(LayerKey::Kind(kind), RateCap { per_minute: 6, over: OverCap::Fold })], "{kind:?}");
+        }
+        // Local/public: mention or keyword only, still capped.
+        assert_eq!(s.resolve(None, ChannelKind::Local, "local").mode, Mode::Mentions);
         let local = s.resolve(None, ChannelKind::Local, "local");
         assert_eq!(local.prefs.caps, vec![(LayerKey::Kind(ChannelKind::Local), RateCap { per_minute: 6, over: OverCap::Fold })]);
         assert_eq!(s.resolve(None, ChannelKind::Public, "system_1_2").prefs.caps[0].1.per_minute, 4);
@@ -334,12 +356,12 @@ mod tests {
     #[test]
     fn a_public_channel_can_be_configured_by_id_but_a_fleet_cannot() {
         let mut s = Settings::default();
-        s.channels.insert("system_263238_263361".into(), Layer { mode: Some(Mode::Mute), ..Layer::default() });
-        s.channels.insert("fleet_1368512310460".into(), Layer { mode: Some(Mode::Mute), ..Layer::default() });
-        assert_eq!(s.resolve(None, ChannelKind::Public, "system_263238_263361").mode, Mode::Mute);
-        assert_eq!(s.resolve(None, ChannelKind::Public, "system_9_9").mode, Mode::Matching, "another public channel is untouched");
+        s.channels.insert("system_263238_263361".into(), Layer { mode: Some(Mode::Nothing), ..Layer::default() });
+        s.channels.insert("fleet_1368512310460".into(), Layer { mode: Some(Mode::Nothing), ..Layer::default() });
+        assert_eq!(s.resolve(None, ChannelKind::Public, "system_263238_263361").mode, Mode::Nothing);
+        assert_eq!(s.resolve(None, ChannelKind::Public, "system_9_9").mode, Mode::Mentions, "another public channel is untouched");
         // Fleet ids change every fleet, so a per-id layer never applies.
-        assert_eq!(s.resolve(None, ChannelKind::Fleet, "fleet_1368512310460").mode, Mode::Matching);
+        assert_eq!(s.resolve(None, ChannelKind::Fleet, "fleet_1368512310460").mode, Mode::Mentions);
     }
 
     #[test]
@@ -378,8 +400,8 @@ mod tests {
         assert!(!text.contains("null"), "unset fields are omitted: {text}");
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), s);
 
-        let partial: Settings = serde_json::from_str(r#"{"pilots":{"7":{"kinds":{"private":{"mode":"mute"}}}}}"#).unwrap();
-        assert_eq!(partial.resolve(Some("7"), ChannelKind::Private, "private_x").mode, Mode::Mute);
+        let partial: Settings = serde_json::from_str(r#"{"pilots":{"7":{"kinds":{"private":{"mode":"nothing"}}}}}"#).unwrap();
+        assert_eq!(partial.resolve(Some("7"), ChannelKind::Private, "private_x").mode, Mode::Nothing);
     }
 
     #[test]
@@ -401,10 +423,10 @@ mod tests {
         let a = b.resolved(Some("1"), ChannelKind::Corp, "corp");
         let again = b.resolved(Some("1"), ChannelKind::Corp, "corp");
         assert!(Arc::ptr_eq(&a, &again), "second lookup is served from the cache");
-        assert_eq!(a.mode, Mode::Matching);
-        b.edit(|s| s.kinds.entry(ChannelKind::Corp).or_default().mode = Some(Mode::Mute));
+        assert_eq!(a.mode, Mode::Everything, "Corp defaults to everything");
+        b.edit(|s| s.kinds.entry(ChannelKind::Corp).or_default().mode = Some(Mode::Nothing));
         let after = b.resolved(Some("1"), ChannelKind::Corp, "corp");
         assert!(!Arc::ptr_eq(&a, &after));
-        assert_eq!(after.mode, Mode::Mute);
+        assert_eq!(after.mode, Mode::Nothing);
     }
 }

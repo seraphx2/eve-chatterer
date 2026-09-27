@@ -112,18 +112,17 @@ impl CompiledRules {
         !name.is_empty() && c.text.to_lowercase().contains(&name)
     }
 
-    /// The content rules: ignores win, then "always" senders, then own name,
-    /// keywords and regexes.
-    pub fn evaluate(&self, c: &LineCtx) -> Option<Reason> {
+    /// The independent tracking layer: "always" senders, keywords, regexes.
+    /// Checked under every `Mode`, `Nothing` included — this is the pilot
+    /// explicitly asking to hear about one thing regardless of how the
+    /// channel is otherwise configured (docs/DESIGN.md, "Notification modes").
+    fn tracked(&self, c: &LineCtx) -> Option<Reason> {
         if self.ignored(c) {
             return None;
         }
         let sender = c.sender.trim().to_lowercase();
         if self.always_senders.contains(&sender) {
             return Some(Reason::AlwaysSender(c.sender.trim().to_string()));
-        }
-        if self.own_name && self.mentions_own_name(c) {
-            return Some(Reason::OwnName);
         }
         let text = c.text.to_lowercase();
         if let Some((k, _)) = self.keywords.iter().find(|(_, lk)| text.contains(lk)) {
@@ -135,15 +134,31 @@ impl CompiledRules {
         None
     }
 
-    /// Applies a channel `Mode` on top of the content rules.
+    fn mentioned(&self, c: &LineCtx) -> Option<Reason> {
+        (!self.ignored(c) && self.own_name && self.mentions_own_name(c)).then_some(Reason::OwnName)
+    }
+
+    /// Own name plus the tracking layer — everything that can fire outside of
+    /// `Mode::Everything`. Kept public for callers that just want "does this
+    /// line match anything", independent of a channel's mode. Own name is
+    /// checked before keywords/regexes, so a line matching both is reported
+    /// as a mention.
+    pub fn evaluate(&self, c: &LineCtx) -> Option<Reason> {
+        self.mentioned(c).or_else(|| self.tracked(c))
+    }
+
+    /// Applies a channel `Mode`. The tracking layer (`tracked`) runs under
+    /// every mode; `Nothing` gets *only* that layer, `Mentions` adds the
+    /// pilot's own name, `Everything` alerts regardless but still prefers a
+    /// specific tracked reason over the generic "every line" one.
     pub fn evaluate_mode(&self, c: &LineCtx, mode: Mode) -> Option<Reason> {
         match mode {
-            Mode::Mute => None,
-            Mode::Matching => self.evaluate(c),
-            Mode::MentionsOnly => (!self.ignored(c) && self.mentions_own_name(c)).then_some(Reason::OwnName),
-            Mode::Everything => {
-                (!self.ignored(c)).then(|| Reason::AlwaysChannel(c.channel_name.trim().to_string()))
-            }
+            Mode::Nothing => self.tracked(c),
+            Mode::Mentions => self.evaluate(c),
+            Mode::Everything => self
+                .tracked(c)
+                .or(self.mentioned(c))
+                .or_else(|| (!self.ignored(c)).then(|| Reason::AlwaysChannel(c.channel_name.trim().to_string()))),
         }
     }
 }
@@ -209,17 +224,18 @@ mod tests {
     }
 
     #[test]
-    fn the_modes_narrow_or_widen_what_alerts() {
+    fn tracked_keywords_fire_under_every_mode_including_nothing() {
+        // A pilot mutes a busy channel but still wants to hear about "jita" —
+        // muting general chatter must not silence what was explicitly tracked
+        // (owner correction 2026-09-27: tracking is independent of the mode).
         let r = || RuleSet { keywords: vec!["jita".into()], ..RuleSet::default() };
-        // Mute: nothing, not even a mention.
-        assert_eq!(mode(r(), Mode::Mute, "Bob", "Jarna!"), None);
-        // MentionsOnly: the keyword no longer counts, a mention still does.
-        assert_eq!(mode(r(), Mode::MentionsOnly, "Bob", "selling in jita"), None);
-        assert_eq!(mode(r(), Mode::MentionsOnly, "Bob", "Jarna, jita?"), Some(Reason::OwnName));
-        // Matching: the normal rules.
-        assert_eq!(mode(r(), Mode::Matching, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
-        // Everything: every line, labelled with the channel.
-        assert_eq!(mode(r(), Mode::Everything, "Bob", "hello"), Some(Reason::AlwaysChannel("Fleet".into())));
+        assert_eq!(mode(r(), Mode::Nothing, "Bob", "Jarna!"), None, "a plain mention still gets nothing");
+        assert_eq!(mode(r(), Mode::Nothing, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
+        assert_eq!(mode(r(), Mode::Mentions, "Bob", "hello there"), None);
+        assert_eq!(mode(r(), Mode::Mentions, "Bob", "Jarna?"), Some(Reason::OwnName));
+        assert_eq!(mode(r(), Mode::Mentions, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
+        assert_eq!(mode(r(), Mode::Everything, "Bob", "hello"), Some(Reason::AlwaysChannel("Fleet".into())), "no tracked reason applies, so the generic one does");
+        assert_eq!(mode(r(), Mode::Everything, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())), "a tracked reason is more specific than the generic one");
     }
 
     #[test]
@@ -228,6 +244,6 @@ mod tests {
         assert_eq!(mode(r(), Mode::Everything, "Jarna", "my own line"), None);
         assert_eq!(mode(r(), Mode::Everything, "EVE System", "MOTD"), None);
         assert_eq!(mode(r(), Mode::Everything, "Spammer", "buy stuff"), None);
-        assert_eq!(mode(r(), Mode::MentionsOnly, "Spammer", "Jarna"), None);
+        assert_eq!(mode(r(), Mode::Mentions, "Spammer", "Jarna"), None);
     }
 }
