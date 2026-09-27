@@ -68,7 +68,40 @@ Result: all 32 decisions matched the presence state at that moment. Focused pilo
 
 Not exercised: alt-tab held longer than the 1.5 s grace with an alert firing during it, and the 5-minute away path (both unit-tested only). Fullscreen (minimize-on-unfocus) client not run through this yet.
 
+## 8. The app's footprint (release build, Tauri v2, two monitors)
+
+`eve-chatterer-app.exe --selftest` (fires overlays on both monitors, a burst, then waits), whole process tree sampled from outside:
+
+| Stage | Processes | Working set | Private |
+|---|---|---|---|
+| Idle, before any alert | 1 | 21.7 MB | 2.5 MB |
+| Overlays showing (2 windows) | 8 | 455-481 MB | 220-240 MB |
+| Windows open, no alerts | 8 | ~476 MB | ~220 MB |
+| After the idle teardown (45 s after the last alert) | 1 | 32.5 MB | 5.8 MB |
+
+- The resident cost is the Rust core (about 6 MB private). The WebView2 tree exists only while alerts show plus 45 s; two windows cost about what dev-prompt's single window does (about 230 MB private), so a second monitor does not double it. The exe is 8.2 MB.
+- CPU across the tree: about 25% of one core while alerts animate, about 1% with windows open and quiet.
+- Cold start (first alert of a session, WebView2 not running): first window built in 406 ms, page ready 496 ms after the alert asked for it; the second monitor's window (warm environment) 117 ms / 149 ms. Add the 240 ms arrival animation.
+- Overlay windows verified as `WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED`, 520 x 640 centered on each monitor; the focus probe saw zero foreground events from the app while overlays showed.
+
+## 9. Compositor cost of animated overlays over the game
+
+GPU utilization from the `\GPU Engine(*)\Utilization Percentage` counters (must be sampled from the session itself; inside a background job they return invalid data), `--soak` keeping alerts on screen for about 50 s per condition, two passes in opposite orders:
+
+| Condition | dwm.exe GPU (pass 1 / pass 2) | our app GPU | EVE (both clients) |
+|---|---|---|---|
+| Lifetime meter smooth (every frame) | 33.4% / 33.0% | 1.9% | no consistent change |
+| Lifetime meter stepped (about 4 updates/s) | 22.5% / 23.6% | 0.3-0.6% | no consistent change |
+| Lifetime meter off (static) | 22.0% / 23.5% | 0.1-0.3% | no consistent change |
+| No overlay | 25.1% / 16.3% | 0 | (baseline) |
+
+- Continuous animation makes the desktop compositor recompose the region under a topmost window every frame: about +10 points of dwm.exe GPU. Stepping the meter removes that; the overlay's own rendering is negligible (under 2% of the GPU). Stepped is the default (`EVE_CHATTERER_METER=smooth|stepped|off` overrides it for measurement).
+- EVE's own GPU load swings by 10+ points on its own (54%, 75% and 67% baselines seen in different runs, a baseline stdev of 9.9), which is larger than any overlay effect we could resolve. **Frame time was not measured** (needs a present-level tool such as PresentMon); GPU utilization showed no consistent effect on EVE.
+- Whether overlay presence alone costs the compositor anything is unresolved (stepped/off vs no overlay was -2.6 and +7.3 points, inside the noise). A cleaner test needs both clients in a static scene.
+
 ## Corrections log (things believed early that were wrong)
+
+- "EVE's GPU rose by about 18 points while overlays animated" (first GPU run, 54% to 72%): not supported. The A/B runs showed EVE's own load varies by more than that with no overlay; the consistent effect is on dwm.exe and it comes from continuous animation.
 
 - "Directory events are fine" and "the 0 ms LAG lines are a race": wrong; they were the poller triggering the notification.
 - "Filename stamp is local time": wrong, it is UTC.

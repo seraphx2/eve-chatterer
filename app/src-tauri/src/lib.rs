@@ -2,6 +2,7 @@
 //! overlays over the game. The always-on part is the Rust core (see
 //! `runner`); WebView2 windows (overlays, settings) exist only while needed.
 
+mod diag;
 mod overlay;
 mod runner;
 mod state;
@@ -54,6 +55,7 @@ fn open_settings(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    diag::init();
     let app = tauri::Builder::default()
         // A second launch just brings up the settings of the running instance.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| open_settings(app)))
@@ -90,6 +92,9 @@ pub fn run() {
             runner::spawn(app.handle().clone());
             if std::env::args().any(|a| a == "--selftest") {
                 testalerts::selftest(app.handle());
+            }
+            if std::env::args().any(|a| a == "--soak") {
+                testalerts::soak(app.handle());
             }
             Ok(())
         })

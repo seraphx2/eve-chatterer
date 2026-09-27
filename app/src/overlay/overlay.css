@@ -88,6 +88,14 @@ b {
   animation-delay: calc(var(--life) * 2 / 3);
 }
 
+/* Meter modes. Stepped updates the meter about 4 times a second instead of every frame. */
+:root[data-meter="stepped"] .life i {
+  animation-timing-function: steps(12, end);
+}
+:root[data-meter="off"] .life i {
+  animation: none;
+}
+
 @keyframes arrive {
   from {
     opacity: 0;

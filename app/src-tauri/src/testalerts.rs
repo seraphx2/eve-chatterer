@@ -60,7 +60,10 @@ pub fn selftest(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let t0 = std::time::Instant::now();
-        let log = |what: &str| println!("[selftest +{:>3}s] {what}", t0.elapsed().as_secs());
+        let log = |what: &str| {
+            println!("[selftest +{:>3}s] {what}", t0.elapsed().as_secs());
+            crate::diag::diag(format!("selftest: {what}"));
+        };
         std::thread::sleep(Duration::from_secs(3));
         log("all three styles on every monitor");
         send(&app, "all");
@@ -73,6 +76,21 @@ pub fn selftest(app: &AppHandle) {
         }
         std::thread::sleep(Duration::from_secs(90u64.saturating_sub(t0.elapsed().as_secs())));
         log("done");
+        app.exit(0);
+    });
+}
+
+/// `--soak`: keeps alerts on screen continuously for a steady-state
+/// measurement: a set of all three styles every 8 s for 50 s, then exit.
+pub fn soak(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        for _ in 0..7 {
+            send(&app, "all");
+            std::thread::sleep(Duration::from_secs(8));
+        }
+        std::thread::sleep(Duration::from_secs(2));
         app.exit(0);
     });
 }

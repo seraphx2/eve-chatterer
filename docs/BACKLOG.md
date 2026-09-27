@@ -1,7 +1,11 @@
 # Backlog
 
-## Before the overlay milestone
-- Measure a minimal Tauri transparent/click-through/non-activating overlay: idle RAM with 1 vs 2 windows on 2 monitors (shared WebView2 environment), and CPU/GPU/frame-time impact while an alert animates over a running EVE client.
+## Overlay measurements still open
+- Frame-time impact on EVE (FINDINGS #9 only has GPU utilization): needs a present-level capture such as PresentMon, with both clients in a static scene so EVE's own load does not swamp the effect. Also whether an idle open window costs the compositor anything.
+- Idle RAM and CPU with 1 window versus 2 (single-monitor users).
+- CPU while animating is about a quarter of one core; check what dominates (likely WebView2 rendering the shadows) and whether the shadows, the arrival animation or the Beacon pulse can be made cheaper.
+
+## Before the overlay milestone (done: see FINDINGS #8 and #9)
 - Overlay behavior at non-100% DPI scaling and mixed-DPI monitors.
 - Verify `Create` events in `probe --no-poll` (open a new channel or log a character in).
 - Test OneDrive placeholder behavior safely (attribute check before opening; never hydrate files only to adopt them).

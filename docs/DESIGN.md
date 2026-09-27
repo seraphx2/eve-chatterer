@@ -16,7 +16,9 @@ Non-goals / hard rules:
 
 Tauri v2 + Rust core + Svelte, rich WebView2 overlays (owner's decision: "richer option"). Reference app for tray/hotkey/autostart/updater/installer patterns: `D:\git\dev-prompt` (its overlay uses `focus: true`; ours must be non-activating).
 
-Memory rule: the Rust core is the always-on part (tens of MB). WebView2 windows (settings, overlays) are created on demand and destroyed after ~45 s idle, sharing one WebView2 environment. All state lives in Rust so webviews can be destroyed freely. WebView2 baseline is the real cost, not alert volume; dev-prompt measured about 300 MB working set for a full app. A minimal-overlay measurement is still to be done (BACKLOG).
+Memory rule: the Rust core is the always-on part. WebView2 windows (settings, overlays) are created on demand and destroyed after ~45 s idle, sharing one WebView2 environment. All state lives in Rust so webviews can be destroyed freely. Measured (FINDINGS #8, release build): about 6 MB private resident; about 230 MB private while overlays are showing (two monitors), with a first-alert cold start of about half a second. The lifetime meter steps about 4 times a second instead of animating every frame, which avoids about +10 points of compositor (dwm.exe) GPU while overlays are on screen (FINDINGS #9); keep continuous animations off the overlays.
+
+App layout (`app/`): `src-tauri` is the Rust side (`runner` drives the core on a background thread; `overlay` creates one transparent, click-through, non-activating window per monitor on demand and reaps idle ones; `testalerts` has the synthetic alerts and the `--selftest` / `--soak` measurement modes; `diag` writes timing lines when `EVE_CHATTERER_DIAG` is set); `src` is Svelte: `overlay/` (Panel, Strip, Beacon) and `settings/` (a status page for now). There is no permanent window: the app lives in the tray and never exits when its last window closes.
 
 ## Architecture
 

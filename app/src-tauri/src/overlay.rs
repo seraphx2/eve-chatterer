@@ -3,6 +3,7 @@
 //! been idle (docs/DESIGN.md, "Stack": the resident footprint is the Rust core;
 //! WebView2 exists only while alerts are showing).
 
+use crate::diag::diag;
 use eve_chatterer_core::presence::Rect;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -52,6 +53,8 @@ struct Slot {
     ready: bool,
     queue: Vec<Msg>,
     last_used: Instant,
+    /// When the first message had to wait for the page (cold-start timing).
+    waiting_since: Option<Instant>,
 }
 
 pub struct Overlays {
@@ -90,13 +93,18 @@ impl Overlays {
         let label = label_for(&monitor);
         if !self.slots.lock().unwrap().contains_key(&label) {
             // Built outside the lock: creating a window pumps the UI thread.
+            let started = Instant::now();
             match create(app, &label) {
                 Ok(window) => {
+                    diag(format!("{label}: window built in {} ms", started.elapsed().as_millis()));
                     let mut slots = self.slots.lock().unwrap();
                     if slots.contains_key(&label) {
                         let _ = window.destroy(); // another thread created it first
                     } else {
-                        slots.insert(label.clone(), Slot { window, ready: false, queue: vec![], last_used: Instant::now() });
+                        slots.insert(
+                            label.clone(),
+                            Slot { window, ready: false, queue: vec![], last_used: Instant::now(), waiting_since: Some(started) },
+                        );
                     }
                 }
                 Err(e) => {
@@ -134,6 +142,9 @@ impl Overlays {
         let mut slots = self.slots.lock().unwrap();
         if let Some(slot) = slots.get_mut(label) {
             slot.ready = true;
+            if let Some(since) = slot.waiting_since.take() {
+                diag(format!("{label}: page ready {} ms after the alert asked for it, {} queued", since.elapsed().as_millis(), slot.queue.len()));
+            }
             for msg in slot.queue.drain(..) {
                 send(app, label, &msg);
             }
@@ -153,8 +164,17 @@ impl Overlays {
     }
 }
 
+/// How the overlay's lifetime meter animates: "smooth", "stepped" or "off".
+/// Stepped is the default: continuous animation makes the desktop compositor
+/// recompose the region over the game every frame (docs/FINDINGS.md #9).
+/// `EVE_CHATTERER_METER` overrides it for measurement.
+fn meter_mode() -> String {
+    std::env::var("EVE_CHATTERER_METER").ok().filter(|m| ["smooth", "stepped", "off"].contains(&m.as_str())).unwrap_or_else(|| "stepped".into())
+}
+
 fn create(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
-    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("overlay.html".into()))
+    let url = WebviewUrl::App(format!("overlay.html?meter={}", meter_mode()).into());
+    let window = WebviewWindowBuilder::new(app, label, url)
         .title("EVE Chatterer overlay")
         .inner_size(WIN_W, WIN_H)
         .decorations(false)
