@@ -1,0 +1,25 @@
+[package]
+name = "eve-chatterer-tools"
+description = "Measurement probes for EVE chat logs, focus tracking and overlays"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "eve_chatterer_tools"
+
+[dependencies]
+notify = "8"
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+]

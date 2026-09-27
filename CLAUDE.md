@@ -11,11 +11,9 @@ A modern EVE Online chat-log notifier: Rust core + Tauri v2 + Svelte, in-game We
 - Key pilots by character id; names never change in EVE and are a stable secondary key.
 - Update `docs/FINDINGS.md` when a measurement changes and add to its corrections log when something previously believed turns out wrong.
 
-## Layout
-- `src/bin/probe.rs` log-folder watcher/tailer probe (`--no-poll` to test events alone)
-- `src/bin/synth.rs` synthetic EVE-style writer + watcher for event-behavior tests
-- `src/bin/focus.rs` foreground-window/EVE-client state probe (writes `focus-log.txt`)
-- `src/bin/overlay.rs` overlay feasibility probe (Ctrl+Alt+1/2/3, writes `overlay-log.txt`)
-- `src/winutil.rs` shared Win32 helpers
+## Layout (Cargo workspace)
+- `core/` library, no UI: `logfmt` (parsing + complete-line reads), `liveset` (live files + poll), `tailer`, `pilots`, `rules`, `merge` (cross-character dedupe), `engine` (drives it all; `tick()` every ~500 ms), `paths` (known-folder lookup), `time`
+- `cli/` the `chatter` binary: `cargo run -p eve-chatterer-cli -- --verbose` follows the real logs read-only and prints alerts
+- `tools/` measurement probes: `probe` (log watcher, `--no-poll`), `synth` (synthetic EVE-style writer/watcher), `focus` (foreground/client state, writes `focus-log.txt`), `overlay` (overlay feasibility, Ctrl+Alt+1/2/3, writes `overlay-log.txt`), plus shared Win32 helpers in `tools/src/winutil.rs`
 
-Run a probe: `cargo run --bin <name>` from this directory (Windows only for focus/overlay).
+Tests: `cargo test -p eve-chatterer-core`. Run a probe: `cargo run -p eve-chatterer-tools --bin <name>` (Windows only for focus/overlay).

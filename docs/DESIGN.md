@@ -38,6 +38,8 @@ Data flow: `pollers -> tailer -> parser -> rules -> dedupe -> router -> overlay 
 
 Milestones: (1) headless core + CLI that prints alerts from real logs, with replayable fixtures; (2) overlays; (3) settings UI + rule editor; (4) sound/voice, autostart, updater, installer.
 
+Milestone 1 status: workspace is `core/` (library), `cli/` (`chatter`), `tools/` (probes). Done and tested: time and log-format parsing (UTF-16LE, per-line BOM, partial lines, truncation, positional header fallback), live-set tracker (filename parsing, newest per character+channel, supersede, OneDrive placeholder guard, poll), pilot registry (id-keyed, silent historic vs live announcement, JSON persistence), rules (own name, keywords, regex, ignore/always lists, MOTD sender filter, per-pilot overrides), cross-character merge, and the engine. Remaining for the milestone: presence in core (focus hook + client registry feeding `mark_live` and suppression), the router (suppress per focused pilot, delivery choice), and replayable fixtures. Pilot "live" in the core means it produced a line or its session is under 2 minutes old; presence (a running client window) should also call `Engine::mark_live`.
+
 ## Finding the live log files
 
 - Poll, do not rely on directory events (FINDINGS #1). The polled set is the **newest file per (character id, channel)**, derived from filenames only. Never trust directory last-write times.
@@ -85,7 +87,9 @@ Overlays are separate topmost, click-through, non-activating windows in screen c
 
 ## Rules UX
 
-A few first-class rules (name mention, keywords, per-channel) with regex behind an "advanced" toggle. Cross-character duplicate handling: same (channel, sender, text) from different listeners within ~2 s counts once per alert, while per-pilot presence still applies.
+A few first-class rules (name mention, keywords, per-channel) with regex behind an "advanced" toggle.
+
+Cross-character duplicates (implemented in `core/src/merge.rs`): the same (channel, sender, text) seen by different listeners within ~2 s is merged into **one line with a `seen_by` list**. Rules are then evaluated per listener (own-name is per pilot), so an `Alert` carries `targets` (pilots whose rules matched, each with its reason) and `seen_by` (every character whose log had the line). The router, which knows about windows, applies suppression per target using presence, and can use `seen_by` to know which screens already showed the line. A first copy is held ~750 ms, only when another character is following the same channel id, so the second copy can join; a lone copy is emitted after the hold. Local is a separate channel per solar system but all share the channel id `local`, so two characters in different systems also pay the 750 ms hold (accepted; tunable).
 
 ## Log format compatibility
 

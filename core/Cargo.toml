@@ -1,0 +1,21 @@
+[package]
+name = "eve-chatterer-core"
+description = "EVE chat log tracking, rules and alert engine (no UI)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+]
+
+[dev-dependencies]
+tempfile = "3"

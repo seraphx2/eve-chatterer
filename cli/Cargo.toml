@@ -1,0 +1,12 @@
+[package]
+name = "eve-chatterer-cli"
+description = "Headless runner for the EVE chat notifier core"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "chatter"
+path = "src/main.rs"
+
+[dependencies]
+eve-chatterer-core = { path = "../core" }

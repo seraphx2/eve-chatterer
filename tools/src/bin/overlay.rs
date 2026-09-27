@@ -25,7 +25,7 @@ fn main() {
 
 #[cfg(windows)]
 mod win {
-    use eve_chatterer::winutil::*;
+    use eve_chatterer_tools::winutil::*;
     use std::fs::{File, OpenOptions};
     use std::io::Write;
     use std::sync::{Mutex, OnceLock};
