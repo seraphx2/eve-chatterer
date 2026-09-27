@@ -16,4 +16,6 @@ A modern EVE Online chat-log notifier: Rust core + Tauri v2 + Svelte, in-game We
 - `cli/` the `chatter` binary: `cargo run -p eve-chatterer-cli -- --verbose` follows the real logs read-only and prints alerts
 - `tools/` measurement probes: `probe` (log watcher, `--no-poll`), `synth` (synthetic EVE-style writer/watcher), `focus` (foreground/client state, writes `focus-log.txt`), `overlay` (overlay feasibility, Ctrl+Alt+1/2/3, writes `overlay-log.txt`), plus shared Win32 helpers in `tools/src/winutil.rs`
 
+- `tools/scripts/feed.ps1` synthetic two-character log feeder for live routing checks (writes only to a temp dir you give it): `pwsh tools/scripts/feed.ps1 -Dir <temp> -Seconds 150` alongside `chatter --dir <temp> --keyword chatterer-test`
+
 Tests: `cargo test -p eve-chatterer-core`. Run a probe: `cargo run -p eve-chatterer-tools --bin <name>` (Windows only for focus/overlay).

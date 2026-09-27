@@ -58,6 +58,14 @@ Cost scales with polled (character, channel) pairs, about 0.05 ms/s each, not wi
 
 `dev-prompt.exe` 36.6 MB working set (10.7 MB private). Its WebView2 tree, 6 processes for one hidden window: about 304 MB working set, roughly 230 MB private. Single warm window created at startup and shown/hidden. This is a full app, not a minimal overlay; the minimal-overlay number is still to be measured.
 
+## 7. End-to-end routing check (headless core + presence + router)
+
+Setup: `tools/scripts/feed.ps1` writes synthetic logs (never the real folder) for two characters named like the owner's live clients ("Jarna", "Psianna Archeia") in one shared channel, appending a line every 4 s with the second copy stamped one second later; `chatter --dir <temp> --keyword chatterer-test` reads them while presence samples the real windows. 150 s run, 32 alerts, the owner moving between focus states by hand.
+
+Result: all 32 decisions matched the presence state at that moment. Focused pilot suppressed and the other one got an overlay on its own monitor (Jarna left, Psianna right, from real window geometry); browser focused gave overlays for both; both clients on another virtual desktop gave toasts for both. Each line produced one alert (32 lines, 32 alerts) carrying both characters in `seen_by`. Alerts printed within about 1 s of the write (includes the 750 ms merge hold).
+
+Not exercised: alt-tab held longer than the 1.5 s grace with an alert firing during it, and the 5-minute away path (both unit-tested only). Fullscreen (minimize-on-unfocus) client not run through this yet.
+
 ## Corrections log (things believed early that were wrong)
 
 - "Directory events are fine" and "the 0 ms LAG lines are a race": wrong; they were the poller triggering the notification.
