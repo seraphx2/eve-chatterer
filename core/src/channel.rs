@@ -5,7 +5,7 @@
 //! |--------------------------|-------------------------|
 //! | `local`                  | Local                   |
 //! | `corp`                   | Corp                    |
-//! | `alliance` (assumed)     | Alliance                |
+//! | `alliance`               | Alliance                |
 //! | `fleet_1368512310460`    | Fleet                   |
 //! | `private_<32 hex>`       | Private message         |
 //! | `system_263238_263361`   | Public channel          |
@@ -18,8 +18,8 @@
 pub enum ChannelKind {
     Local,
     Corp,
-    /// The alliance channel; only exists while in an alliance. The id `alliance`
-    /// is an assumption until a real alliance log has been seen.
+    /// The alliance channel; only exists while in an alliance. Its id is `alliance`
+    /// (confirmed from a real alliance log: `Alliance_20260925_121918_496528567.txt`).
     Alliance,
     Fleet,
     Private,
@@ -77,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn the_alliance_guess_and_unknown_ids() {
+    fn alliance_and_unknown_ids() {
         assert_eq!(classify("alliance", "Alliance"), ChannelKind::Alliance);
         assert_eq!(classify("mystery_42", "Something"), ChannelKind::Unknown);
     }

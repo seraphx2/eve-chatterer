@@ -299,6 +299,14 @@ mod tests {
         assert_eq!((n.channel.as_str(), n.char_id.as_deref(), n.stamp.as_str()), ("Local", Some("1216741999"), "20260926_210356"));
         let n = parse_session_name("Private Chat (2)_20260926_210933_1216741999.txt").unwrap();
         assert_eq!(n.channel, "Private Chat (2)");
+        // Real names from a public channel, a fleet and an alliance member's log.
+        for (file, chan) in [
+            ("EVE University_20260927_041925_1590304510.txt", "EVE University"),
+            ("Fleet_20260927_041837_1590304510.txt", "Fleet"),
+            ("Alliance_20260925_121918_496528567.txt", "Alliance"),
+        ] {
+            assert_eq!(parse_session_name(file).unwrap().channel, chan, "{file}");
+        }
         let n = parse_session_name("Fleet_Ops_20260926_210933_5.txt").unwrap();
         assert_eq!(n.channel, "Fleet_Ops");
         let n = parse_session_name("Local_20260926_210356.txt").unwrap();
