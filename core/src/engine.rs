@@ -117,6 +117,12 @@ impl Engine {
         &self.pilots
     }
 
+    /// For app-level edits (e.g. removing an abandoned known channel) that
+    /// don't belong in the alert pipeline itself.
+    pub fn pilots_mut(&mut self) -> &mut PilotRegistry {
+        &mut self.pilots
+    }
+
     pub fn settings(&self) -> &SettingsBook {
         &self.book
     }
@@ -217,6 +223,25 @@ impl Engine {
                 Observation::NewHistoric(p) => events.push(Event::PilotInLogs(p)),
                 Observation::Known => {}
             }
+        }
+
+        // Which public channels each character has actually been seen in, for
+        // the settings UI to list (docs/DESIGN.md, "Settings screen"). Local,
+        // Corp, Alliance, Fleet and Private are always one row regardless of
+        // which instance, so only Public (and Unknown) channels need this.
+        let known: Vec<(String, String, String, ChannelKind)> = self
+            .live
+            .sessions()
+            .filter_map(|s| {
+                let id = s.char_id?.to_string();
+                let h = s.header?;
+                let kind = classify(&h.channel_id, &h.channel_name);
+                matches!(kind, ChannelKind::Public | ChannelKind::Unknown)
+                    .then(|| (id, h.channel_id.clone(), h.channel_name.clone(), kind))
+            })
+            .collect();
+        for (id, channel_id, channel_name, kind) in known {
+            self.pilots.note_channel(&id, &channel_id, &channel_name, kind, now);
         }
     }
 
@@ -388,6 +413,22 @@ mod tests {
         assert!(e.pilots().get("9").is_some_and(|p| !p.live));
         append(&p, &line("2026.09.26 10:00:05", "Bob", "hello"));
         assert!(e.tick(t0 + Duration::from_millis(500)).iter().any(|x| matches!(x, Event::NewPilot(p) if p.id == "9")));
+    }
+
+    #[test]
+    fn a_pilots_public_channels_are_recorded_but_local_corp_fleet_and_private_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        session(dir.path(), "Local", "1", "Jarna");
+        session(dir.path(), "Corp", "1", "Jarna");
+        session(dir.path(), "Fleet", "1", "Jarna");
+        session(dir.path(), "Private Chat (2)", "1", "Jarna");
+        session(dir.path(), "EVE University", "1", "Jarna");
+        let mut e = engine(dir.path(), Layer::default());
+        e.tick(Instant::now());
+        let known = &e.pilots().get("1").unwrap().channels;
+        assert_eq!(known.len(), 1, "{known:?}");
+        assert_eq!(known["system_1_2"].name, "EVE University");
+        assert_eq!(known["system_1_2"].kind, ChannelKind::Public);
     }
 
     #[test]

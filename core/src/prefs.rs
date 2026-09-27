@@ -71,6 +71,7 @@ pub enum OverCap {
 /// A ceiling on alerts. Unlike preferences, caps from every applicable level
 /// all apply: a channel cannot lift a pilot's cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RateCap {
     pub per_minute: u32,
     pub over: OverCap,

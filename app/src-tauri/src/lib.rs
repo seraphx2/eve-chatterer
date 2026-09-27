@@ -8,7 +8,8 @@ mod runner;
 mod state;
 mod testalerts;
 
-use state::{AppState, Status};
+use eve_chatterer_core::settings::Settings;
+use state::{AppState, SettingsData, Status};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
@@ -16,6 +17,50 @@ use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilde
 #[tauri::command]
 fn get_status(state: State<'_, AppState>) -> Status {
     state.status.lock().unwrap().clone()
+}
+
+/// Everything the settings window needs: the raw layered settings plus every
+/// known character (each with the public channels it's actually been seen
+/// in). "Not ready yet" only during the brief startup window before the
+/// engine has found the log folder.
+#[tauri::command]
+fn get_settings_data(state: State<'_, AppState>) -> Result<SettingsData, String> {
+    let guard = state.engine.lock().unwrap();
+    let engine = guard.as_ref().ok_or("Still starting up — try again in a moment.")?;
+    Ok(SettingsData { settings: engine.settings().settings().clone(), pilots: engine.pilots().iter().cloned().collect() })
+}
+
+/// Validates, persists to settings.json, and applies to the running engine
+/// immediately (live inheritance: every character re-resolves on its next
+/// alert, no restart needed).
+#[tauri::command]
+fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
+    let bad = settings.invalid_regexes();
+    if !bad.is_empty() {
+        return Err(format!("These patterns don't compile: {}", bad.join(", ")));
+    }
+    let cfg_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    settings.save(&cfg_dir.join("settings.json")).map_err(|e| e.to_string())?;
+    let mut guard = state.engine.lock().unwrap();
+    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+    engine.settings_mut().edit(|s| *s = settings);
+    Ok(())
+}
+
+/// Forgets a known channel outright. Refuses if the pilot has any settings of
+/// its own for that channel, so this can never silently discard a configured
+/// rule (docs/BACKLOG.md, "Known channels never get pruned").
+#[tauri::command]
+fn remove_known_channel(app: AppHandle, state: State<'_, AppState>, pilot_id: String, channel_id: String) -> Result<(), String> {
+    let mut guard = state.engine.lock().unwrap();
+    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+    let has_override = engine.settings().settings().pilots.get(&pilot_id).is_some_and(|p| p.channels.contains_key(&channel_id));
+    if has_override {
+        return Err("This channel has settings of its own — reset them to Defaults first, then remove it.".into());
+    }
+    engine.pilots_mut().remove_channel(&pilot_id, &channel_id);
+    let pilots_path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pilots.json");
+    engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -61,7 +106,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| open_settings(app)))
         .plugin(tauri_plugin_notification::init())
         .manage(AppState::new())
-        .invoke_handler(tauri::generate_handler![get_status, send_test, overlay_ready])
+        .invoke_handler(tauri::generate_handler![get_status, send_test, overlay_ready, get_settings_data, save_settings, remove_known_channel])
         .setup(|app| {
             let settings_i = MenuItem::with_id(app, "tray-settings", "Settings…", true, None::<&str>)?;
             let test_i = MenuItem::with_id(app, "tray-test", "Try the overlays", true, None::<&str>)?;

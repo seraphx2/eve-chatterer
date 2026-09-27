@@ -14,6 +14,7 @@ use eve_chatterer_core::rules::Reason;
 use eve_chatterer_core::settings::{Settings, SettingsBook};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
@@ -100,7 +101,9 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
 
 struct Runner {
     app: AppHandle,
-    engine: Engine,
+    /// Shared with `AppState::engine` so settings commands can reach in
+    /// (`get_settings_data` / `save_settings`); locked briefly once per tick.
+    engine: Arc<Mutex<Option<Engine>>>,
     sampler: Sampler,
     governor: Governor,
     router_cfg: RouterConfig,
@@ -133,6 +136,8 @@ fn run(app: AppHandle) -> Result<(), String> {
         PilotRegistry::default()
     });
     let dir = paths::chatlogs_dir().ok_or("Could not find Documents\\EVE\\logs\\Chatlogs. Is chat logging turned on in EVE?")?;
+    let engine_slot = app.state::<AppState>().engine.clone();
+    *engine_slot.lock().unwrap() = Some(Engine::new(&dir, EngineConfig::default(), pilots, SettingsBook::new(settings)));
     {
         let state = app.state::<AppState>();
         let mut st = state.status.lock().unwrap();
@@ -141,7 +146,7 @@ fn run(app: AppHandle) -> Result<(), String> {
     }
 
     let mut r = Runner {
-        engine: Engine::new(&dir, EngineConfig::default(), pilots, SettingsBook::new(settings)),
+        engine: engine_slot,
         sampler: Sampler::new(),
         governor: Governor::new(),
         router_cfg: RouterConfig::default(),
@@ -165,8 +170,13 @@ impl Runner {
                     self.last_client_log = Some(now);
                     println!("clients: {}  focused: {:?}", snap.clients.iter().map(|c| format!("{}[{}]", c.character, if c.on_screen() {"on-screen"} else if c.minimized {"minimized"} else {"hidden"})).collect::<Vec<_>>().join(", "), snap.focused);
                 }
-                let mut events = self.engine.observe_clients(&names, now);
-                events.extend(self.engine.tick(now));
+                let events = {
+                    let mut guard = self.engine.lock().unwrap();
+                    let engine = guard.as_mut().expect("engine is set before run_loop starts");
+                    let mut events = engine.observe_clients(&names, now);
+                    events.extend(engine.tick(now));
+                    events
+                };
                 for ev in events {
                     self.handle(ev, &snap, now);
                 }
@@ -179,8 +189,10 @@ impl Runner {
 
     fn publish_pilots(&self) {
         let state = self.app.state::<AppState>();
+        let guard = self.engine.lock().unwrap();
+        let engine = guard.as_ref().expect("engine is set before run_loop starts");
         let mut st = state.status.lock().unwrap();
-        st.pilots = self.engine.pilots().iter().map(|p| PilotView { id: p.id.clone(), name: p.name.clone(), live: p.live }).collect();
+        st.pilots = engine.pilots().iter().map(|p| PilotView { id: p.id.clone(), name: p.name.clone(), live: p.live }).collect();
         st.pilots.sort_by(|a, b| b.live.cmp(&a.live).then_with(|| a.name.cmp(&b.name)));
         st.alerts_shown = state.alerts_shown.load(Ordering::Relaxed);
         st.overlay_windows = state.overlays.window_count();
@@ -204,20 +216,22 @@ impl Runner {
                 }
             }
             Event::NewPilot(p) => {
-                if let Err(e) = self.engine.pilots().save(&self.pilots_path) {
-                    eprintln!("could not save pilots.json: {e}");
-                }
+                self.save_pilots();
                 notify(&self.app, &format!("New character: {}", p.name), "Chat alerts are on for this character. Open EVE Chatterer from the tray to adjust them.");
             }
-            Event::PilotInLogs(_) => {
-                if let Err(e) = self.engine.pilots().save(&self.pilots_path) {
-                    eprintln!("could not save pilots.json: {e}");
-                }
-            }
+            Event::PilotInLogs(_) => self.save_pilots(),
             Event::ChatLoggingOff { name } => {
                 notify(&self.app, &format!("No chat log for {name}"), "Turn on \"Log chat to file\" in EVE's chat settings so alerts can work for this character.");
             }
             Event::Discovery(_) => {}
+        }
+    }
+
+    fn save_pilots(&self) {
+        let guard = self.engine.lock().unwrap();
+        let engine = guard.as_ref().expect("engine is set before run_loop starts");
+        if let Err(e) = engine.pilots().save(&self.pilots_path) {
+            eprintln!("could not save pilots.json: {e}");
         }
     }
 

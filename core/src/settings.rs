@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 /// One level of overrides. `None` means "inherit".
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Layer {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<Mode>,
@@ -68,7 +68,7 @@ pub struct Layer {
 
 /// Everything configured for one pilot (a character id).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct PilotSettings {
     pub base: Layer,
     pub kinds: BTreeMap<ChannelKind, Layer>,
@@ -77,7 +77,7 @@ pub struct PilotSettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub global: Layer,
     pub kinds: BTreeMap<ChannelKind, Layer>,

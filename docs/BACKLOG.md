@@ -17,6 +17,9 @@
 - Bundle Barlow with the app (the mockup loads it from Google Fonts).
 - Optional frosted glass through Windows acrylic on the overlay window; check its GPU cost over EVE first.
 
+## Known channels never get pruned
+`Pilot.channels` (core/src/pilots.rs) is a cumulative, append-only record — once a character is seen in a public channel it stays listed on that character's Settings page forever, even after the channel closes and ages out of the live-tracking set entirely. No UI exists to remove one. Fine for a handful of channels; will clutter a character's Settings page over months of joining trade/recruitment channels. Options: a "remove" action per channel row (only when it has no override set, so removing it never silently discards a configured rule), and/or auto-drop entries not seen live in N days that also carry no override.
+
 ## Settings
 - More annoyance controls beyond the three shipped (mode, rate cap, sound): repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, away behavior, minimum priority. The layer structure already allows adding fields.
 - Settings UI: superseded by the finalized mockup (`docs/design/settings-screen.html`, see DESIGN.md "Settings screen") — a sidebar/tree (Characters > Defaults/each character, Audio, General, About), not a matrix, with a per-field deviation marker and revert control. Remaining work: wire it into `app/src/settings/Settings.svelte` and add the settings load/save Tauri commands.

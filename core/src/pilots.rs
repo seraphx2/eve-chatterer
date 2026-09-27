@@ -5,13 +5,32 @@
 //! is registered silently; the first time it is seen live is the moment to
 //! create its config and tell the user (docs/DESIGN.md, "Pilots").
 
+use crate::channel::ChannelKind;
 use crate::time::Stamp;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
+/// A channel this pilot has been seen in, whose specific instance the
+/// settings UI needs to list individually — in practice only Public (and
+/// Unknown) channels, since Local/Corp/Alliance/Fleet/Private are always one
+/// row regardless of which system, corp, alliance, fleet or conversation it
+/// actually is (docs/DESIGN.md, "Settings screen").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownChannel {
+    pub name: String,
+    pub kind: ChannelKind,
+    /// Unix seconds when this pilot was last seen active in it — the only way
+    /// to tell an abandoned channel from a current one, since the entry
+    /// itself is otherwise kept forever (docs/BACKLOG.md, "Known channels
+    /// never get pruned").
+    pub last_seen: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Pilot {
     pub id: String,
     pub name: String,
@@ -19,6 +38,9 @@ pub struct Pilot {
     pub live: bool,
     /// Unix seconds when first registered.
     pub first_seen: i64,
+    /// Keyed by channel id.
+    #[serde(default)]
+    pub channels: BTreeMap<String, KnownChannel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +61,7 @@ impl PilotRegistry {
     pub fn observe(&mut self, id: &str, name: &str, live: bool, now: Stamp) -> Observation {
         match self.pilots.get_mut(id) {
             None => {
-                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0 };
+                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new() };
                 self.pilots.insert(id.to_string(), p.clone());
                 if live {
                     Observation::NewLive(p)
@@ -80,6 +102,23 @@ impl PilotRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.pilots.is_empty()
+    }
+
+    /// Records that `id` is active in this channel right now — always bumps
+    /// `last_seen`, even when the name/kind are unchanged. A no-op for an
+    /// unknown pilot id (observe it first).
+    pub fn note_channel(&mut self, id: &str, channel_id: &str, channel_name: &str, kind: ChannelKind, now: Stamp) {
+        if let Some(p) = self.pilots.get_mut(id) {
+            p.channels.insert(channel_id.to_string(), KnownChannel { name: channel_name.to_string(), kind, last_seen: now.0 });
+        }
+    }
+
+    /// Forgets a channel outright — the UI only offers this when nothing is
+    /// configured for it, so it never silently discards a rule.
+    pub fn remove_channel(&mut self, id: &str, channel_id: &str) {
+        if let Some(p) = self.pilots.get_mut(id) {
+            p.channels.remove(channel_id);
+        }
     }
 
     /// A missing file is an empty registry (first run).
@@ -135,16 +174,62 @@ mod tests {
     }
 
     #[test]
+    fn known_channels_are_recorded_and_last_seen_is_bumped_every_time() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Jarna", true, T);
+        r.note_channel("1", "system_1_2", "EVE University", ChannelKind::Public, T);
+        assert_eq!(r.get("1").unwrap().channels.len(), 1);
+        let c = &r.get("1").unwrap().channels["system_1_2"];
+        assert_eq!((c.name.as_str(), c.last_seen), ("EVE University", T.0));
+
+        // A rename updates in place, not a second entry, and last_seen moves forward.
+        let later = Stamp(T.0 + 3600);
+        r.note_channel("1", "system_1_2", "EVE University Renamed", ChannelKind::Public, later);
+        assert_eq!(r.get("1").unwrap().channels.len(), 1);
+        let c = &r.get("1").unwrap().channels["system_1_2"];
+        assert_eq!((c.name.as_str(), c.last_seen), ("EVE University Renamed", later.0));
+
+        // A second distinct channel adds, not replaces.
+        r.note_channel("1", "system_9_9", "Help", ChannelKind::Public, later);
+        assert_eq!(r.get("1").unwrap().channels.len(), 2);
+        // An unknown pilot id is a no-op, not a panic.
+        r.note_channel("nobody", "system_1_2", "EVE University", ChannelKind::Public, later);
+        assert!(r.get("nobody").is_none());
+    }
+
+    #[test]
+    fn a_channel_can_be_removed() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Jarna", true, T);
+        r.note_channel("1", "system_1_2", "EVE University", ChannelKind::Public, T);
+        r.remove_channel("1", "system_1_2");
+        assert!(r.get("1").unwrap().channels.is_empty());
+        // Removing something absent, or from an unknown pilot, is a no-op.
+        r.remove_channel("1", "system_1_2");
+        r.remove_channel("nobody", "system_1_2");
+    }
+
+    #[test]
     fn round_trips_through_disk_and_a_missing_file_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sub").join("pilots.json");
         assert!(PilotRegistry::load(&path).unwrap().is_empty());
         let mut r = PilotRegistry::default();
         r.observe("1", "Jarna", true, T);
+        r.note_channel("1", "system_1_2", "EVE University", ChannelKind::Public, T);
         r.save(&path).unwrap();
         let back = PilotRegistry::load(&path).unwrap();
         assert_eq!(back.get("1"), r.get("1"));
         std::fs::write(&path, "not json").unwrap();
         assert!(PilotRegistry::load(&path).is_err());
+    }
+
+    #[test]
+    fn a_pilots_json_from_before_known_channels_existed_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pilots.json");
+        std::fs::write(&path, r#"{"pilots":{"1":{"id":"1","name":"Jarna","live":true,"firstSeen":1}}}"#).unwrap();
+        let r = PilotRegistry::load(&path).unwrap();
+        assert!(r.get("1").unwrap().channels.is_empty());
     }
 }
