@@ -18,13 +18,50 @@
 
 use crate::channel::ChannelKind;
 use crate::prefs::{DeliveryMode, LayerKey, Mode, OverCap, OverlayStyle, Prefs, RateCap, Suppression};
-use crate::rules::{CompiledRules, RuleSet};
+use crate::rules::{CompiledRules, RuleSet, TrackedTerm};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackedKind {
+    Keyword,
+    Regex,
+}
+
+/// A tracked keyword or regex. Stored once per character (or once for
+/// Defaults), not once per channel layer — which channels it applies to is a
+/// property of the entry itself (`only_in`), not of where the list lives.
+/// Chosen over a per-channel-layer list (owner decision 2026-09-27): "the
+/// same string/regex in 3 of 5 channels" gets unmanageable fast as separate
+/// per-channel lists, but is one entry with a 3-channel scope here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackedRule {
+    pub text: String,
+    pub kind: TrackedKind,
+    /// Empty means every channel kind; otherwise just these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only_in: Vec<ChannelKind>,
+    /// Still fires on a channel whose Mode is "Nothing". Default true,
+    /// matching tracked matching's original, only behavior.
+    #[serde(default = "TrackedRule::default_even_when_muted")]
+    pub even_when_muted: bool,
+}
+
+impl TrackedRule {
+    fn default_even_when_muted() -> bool {
+        true
+    }
+
+    fn applies_to(&self, kind: ChannelKind) -> bool {
+        self.only_in.is_empty() || self.only_in.contains(&kind)
+    }
+}
 
 /// One level of overrides. `None` means "inherit".
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -36,10 +73,15 @@ pub struct Layer {
     // Content rules (a list set here replaces the inherited list).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub own_name: Option<bool>,
+    /// Only ever consulted on the Global and Pilot(base) layers — see
+    /// `TrackedRule`'s doc comment for why channel scoping lives on the
+    /// entry instead of the layer. Still a plain `Layer` field (rather than
+    /// living only on `Settings`/`PilotSettings`) so it round-trips through
+    /// the same `Option<Vec<_>>` "unset means inherit" convention as
+    /// everything else, and `resolve()`'s single layer-walking loop can stay
+    /// one loop instead of a separate pass just for this.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub keywords: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub regexes: Option<Vec<String>>,
+    pub tracked: Option<Vec<TrackedRule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore_own_messages: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,6 +165,12 @@ impl Settings {
         for org in [ChannelKind::Corp, ChannelKind::Alliance] {
             s.kinds.insert(org, everything(Some(6), Some(OverlayStyle::Panel)));
         }
+        // A seeded example, not just an empty list: "@all" is a common
+        // convention for an FC or corp leadership calling for attention in a
+        // channel that has no real @mention, so it's a genuinely useful
+        // out-of-the-box demo of "watch for this no matter the channel's
+        // mode" (owner request 2026-09-28).
+        s.global.tracked = Some(vec![TrackedRule { text: "@all".into(), kind: TrackedKind::Keyword, only_in: vec![], even_when_muted: true }]);
         s
     }
 
@@ -156,6 +204,11 @@ impl Settings {
         let mut mode = Mode::Mentions;
         let mut rules = RuleSet::default();
         let mut prefs = Prefs::default();
+        // Unlike everything else in this loop, a tracked list is never read
+        // from a Kind/Channel/PilotKind/PilotChannel layer — only Global and
+        // Pilot(base) — because each entry already carries its own channel
+        // scope (`TrackedRule::only_in`), applied in the filter below.
+        let mut tracked_all: Vec<TrackedRule> = vec![];
         for (key, l) in self.layers(pilot_id, kind, channel_id) {
             if let Some(v) = l.mode {
                 mode = v;
@@ -163,11 +216,10 @@ impl Settings {
             if let Some(v) = l.own_name {
                 rules.own_name = v;
             }
-            if let Some(v) = &l.keywords {
-                rules.keywords = v.clone();
-            }
-            if let Some(v) = &l.regexes {
-                rules.regexes = v.clone();
+            if matches!(key, LayerKey::Global | LayerKey::Pilot) {
+                if let Some(v) = &l.tracked {
+                    tracked_all = v.clone();
+                }
             }
             if let Some(v) = l.ignore_own_messages {
                 rules.ignore_own_messages = v;
@@ -200,8 +252,22 @@ impl Settings {
                 prefs.caps.push((key, cap)); // every level's cap applies
             }
         }
-        let (good, bad_regexes): (Vec<String>, Vec<String>) =
-            rules.regexes.iter().cloned().partition(|p| p.trim().is_empty() || Regex::new(&format!("(?i){p}")).is_ok());
+        for t in tracked_all.iter().filter(|t| t.applies_to(kind)) {
+            let term = TrackedTerm { text: t.text.clone(), even_when_muted: t.even_when_muted };
+            match t.kind {
+                TrackedKind::Keyword => rules.keywords.push(term),
+                TrackedKind::Regex => rules.regexes.push(term),
+            }
+        }
+        let mut good = Vec::with_capacity(rules.regexes.len());
+        let mut bad_regexes = Vec::new();
+        for t in rules.regexes {
+            if t.text.trim().is_empty() || Regex::new(&format!("(?i){}", t.text)).is_ok() {
+                good.push(t);
+            } else {
+                bad_regexes.push(t.text);
+            }
+        }
         rules.regexes = good;
         let rules = CompiledRules::compile(&rules).unwrap_or_else(|_| CompiledRules::compile(&RuleSet::default()).unwrap());
         Resolved { mode, rules, prefs, bad_regexes }
@@ -216,18 +282,51 @@ impl Settings {
             all.extend(p.kinds.values().chain(p.channels.values()));
         }
         all.into_iter()
-            .flat_map(|l| l.regexes.iter().flatten())
+            .flat_map(|l| l.tracked.iter().flatten())
+            .filter(|t| t.kind == TrackedKind::Regex)
+            .map(|t| t.text.as_str())
             .filter(|p| !p.trim().is_empty() && Regex::new(&format!("(?i){p}")).is_err())
-            .cloned()
+            .map(String::from)
             .collect()
     }
 
     /// A missing file gives the built-in defaults (first run).
     pub fn load(path: &Path) -> io::Result<Settings> {
         match std::fs::read_to_string(path) {
-            Ok(s) => serde_json::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+            Ok(s) => {
+                let mut loaded: Settings = serde_json::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                loaded.backfill_missing_kinds();
+                loaded.backfill_example_tracked();
+                Ok(loaded)
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Settings::with_defaults()),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Adds the shipped default for any kind that is not present *as a key*
+    /// at all — a file saved before a kind existed in `with_defaults` (or one
+    /// hand-written to only mention a few kinds). Deliberately does not touch
+    /// a kind that IS present, even as an empty `{}`: that is a real,
+    /// ambiguous user state (either "I want the base fallback here" or an
+    /// accidental clear from the UI, e.g. the Defaults-page revert bug found
+    /// 2026-09-27 — docs/DESIGN.md), and guessing wrong would silently
+    /// overwrite something the user set on purpose.
+    fn backfill_missing_kinds(&mut self) {
+        for (kind, layer) in Settings::with_defaults().kinds {
+            self.kinds.entry(kind).or_insert(layer);
+        }
+    }
+
+    /// Same non-destructive backfill principle as `backfill_missing_kinds`,
+    /// for the "@all" example seeded in `with_defaults()`: only fills it in
+    /// when `global.tracked` is absent entirely (a file saved before the
+    /// example existed), never when it's present, even as an empty list —
+    /// that's the user having deliberately cleared it, or added their own
+    /// entries already, either way not something to silently add to.
+    fn backfill_example_tracked(&mut self) {
+        if self.global.tracked.is_none() {
+            self.global.tracked = Settings::with_defaults().global.tracked;
         }
     }
 
@@ -283,8 +382,12 @@ mod tests {
     use super::*;
     use crate::rules::{LineCtx, Reason};
 
-    fn kw(words: &[&str]) -> Option<Vec<String>> {
-        Some(words.iter().map(|w| w.to_string()).collect())
+    fn tracked_kw(words: &[&str]) -> Option<Vec<TrackedRule>> {
+        Some(words.iter().map(|w| TrackedRule { text: w.to_string(), kind: TrackedKind::Keyword, only_in: vec![], even_when_muted: true }).collect())
+    }
+
+    fn tracked_kw_scoped(word: &str, only_in: &[ChannelKind]) -> Option<Vec<TrackedRule>> {
+        Some(vec![TrackedRule { text: word.to_string(), kind: TrackedKind::Keyword, only_in: only_in.to_vec(), even_when_muted: true }])
     }
 
     /// Which keyword (if any) fires for this text in the resolved behavior.
@@ -296,23 +399,54 @@ mod tests {
     }
 
     #[test]
-    fn a_pilots_own_setting_beats_the_kind_default() {
+    fn a_pilots_own_tracked_list_replaces_defaults_entirely() {
+        // Tracked entries are base-only (Global -> Pilot base), not layered
+        // per kind/channel like everything else here (owner decision
+        // 2026-09-27: channel targeting moved onto the entry itself instead,
+        // see `TrackedRule`) — so a pilot's own list fully replaces
+        // Defaults', the same "most specific wins" rule as everywhere else,
+        // just with two levels instead of six.
         let mut s = Settings::default();
-        s.global.keywords = kw(&["g"]);
-        s.kinds.insert(ChannelKind::Corp, Layer { keywords: kw(&["k"]), ..Layer::default() });
-        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "k g p pk pc"), Some("k".into()), "kind beats global");
+        s.global.tracked = tracked_kw(&["g"]);
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "g p"), Some("g".into()));
 
-        s.pilots.entry("1".into()).or_default().base.keywords = kw(&["p"]);
-        assert_eq!(hit(&s.resolve(Some("1"), ChannelKind::Corp, "corp"), "k g p pk pc"), Some("p".into()), "pilot beats kind");
-
-        s.pilots.get_mut("1").unwrap().kinds.insert(ChannelKind::Corp, Layer { keywords: kw(&["pk"]), ..Layer::default() });
-        assert_eq!(hit(&s.resolve(Some("1"), ChannelKind::Corp, "corp"), "k g p pk pc"), Some("pk".into()), "pilot+kind beats pilot");
-
-        s.pilots.get_mut("1").unwrap().channels.insert("corp".into(), Layer { keywords: kw(&["pc"]), ..Layer::default() });
-        assert_eq!(hit(&s.resolve(Some("1"), ChannelKind::Corp, "corp"), "k g p pk pc"), Some("pc".into()), "pilot+channel is most specific");
-
+        s.pilots.entry("1".into()).or_default().base.tracked = tracked_kw(&["p"]);
+        assert_eq!(hit(&s.resolve(Some("1"), ChannelKind::Corp, "corp"), "g p"), Some("p".into()), "the pilot's own list replaces Defaults', not merges with it");
         // Another pilot is unaffected.
-        assert_eq!(hit(&s.resolve(Some("2"), ChannelKind::Corp, "corp"), "k g p pk pc"), Some("k".into()));
+        assert_eq!(hit(&s.resolve(Some("2"), ChannelKind::Corp, "corp"), "g p"), Some("g".into()));
+
+        // A kind or channel layer's tracked list, if one were ever set by
+        // hand-edited JSON, has no effect - only Global/pilot base are read.
+        s.kinds.insert(ChannelKind::Corp, Layer { tracked: tracked_kw(&["k"]), ..Layer::default() });
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "g k"), Some("g".into()), "a kind-layer tracked list is ignored");
+    }
+
+    #[test]
+    fn a_tracked_entrys_channel_scope_limits_where_it_fires() {
+        let mut s = Settings::default();
+        s.global.tracked = tracked_kw_scoped("jita", &[ChannelKind::Local]);
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Local, "local"), "selling in jita"), Some("jita".into()));
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "selling in jita"), None, "scoped to Local only");
+
+        // Empty only_in (tracked_kw's default) means every channel kind.
+        s.global.tracked = tracked_kw(&["everywhere"]);
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Local, "local"), "everywhere"), Some("everywhere".into()));
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "everywhere"), Some("everywhere".into()));
+    }
+
+    #[test]
+    fn even_when_muted_flows_through_resolve_into_the_compiled_rules() {
+        // rules.rs's own tests already cover the matching behavior in depth;
+        // this just proves resolve() actually carries the flag through from
+        // TrackedRule into the RuleSet it hands to CompiledRules, rather
+        // than dropping it along the way.
+        let mut s = Settings::default();
+        s.global.tracked = Some(vec![TrackedRule { text: "jita".into(), kind: TrackedKind::Keyword, only_in: vec![], even_when_muted: false }]);
+        s.kinds.insert(ChannelKind::Local, Layer { mode: Some(Mode::Nothing), ..Layer::default() });
+        let r = s.resolve(None, ChannelKind::Local, "local");
+        assert_eq!(r.mode, Mode::Nothing);
+        let ctx = LineCtx { pilot_name: "Jarna", channel_name: "Local", sender: "Bob", text: "selling in jita" };
+        assert_eq!(r.rules.evaluate_mode(&ctx, r.mode), None, "even_when_muted:false makes it respect the muted channel");
     }
 
     #[test]
@@ -382,7 +516,10 @@ mod tests {
     #[test]
     fn a_bad_regex_is_skipped_and_reported() {
         let mut s = Settings::default();
-        s.global.regexes = Some(vec!["(".into(), r"\bgank\b".into()]);
+        s.global.tracked = Some(vec![
+            TrackedRule { text: "(".into(), kind: TrackedKind::Regex, only_in: vec![], even_when_muted: true },
+            TrackedRule { text: r"\bgank\b".into(), kind: TrackedKind::Regex, only_in: vec![], even_when_muted: true },
+        ]);
         let r = s.resolve(None, ChannelKind::Local, "local");
         assert_eq!(r.bad_regexes, ["("]);
         assert!(matches!(
@@ -410,11 +547,52 @@ mod tests {
         let path = dir.path().join("cfg").join("settings.json");
         assert_eq!(Settings::load(&path).unwrap(), Settings::with_defaults());
         let mut s = Settings::with_defaults();
-        s.global.keywords = kw(&["jita"]);
+        s.global.tracked = tracked_kw(&["jita"]);
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), s);
         std::fs::write(&path, "nope").unwrap();
         assert!(Settings::load(&path).is_err());
+    }
+
+    #[test]
+    fn loading_backfills_a_kind_missing_entirely_but_leaves_an_empty_one_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // "fleet" is absent as a key (as the Defaults-revert bug, 2026-09-27,
+        // left it) and must come back with its shipped default. "private" is
+        // present but empty, which is what a deliberate "use the base
+        // fallback here" edit looks like too, so it must be left exactly
+        // as-is rather than guessed at.
+        std::fs::write(&path, r#"{"kinds":{"private":{}}}"#).unwrap();
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.resolve(None, ChannelKind::Fleet, "fleet_1").mode, Mode::Everything, "backfilled from with_defaults()");
+        assert_eq!(
+            loaded.resolve(None, ChannelKind::Private, "private_x").mode,
+            Mode::Mentions,
+            "left as the base fallback, not silently reset to with_defaults()' Everything"
+        );
+    }
+
+    #[test]
+    fn loading_backfills_the_all_example_only_when_tracked_is_absent_entirely() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // No "global" key at all: tracked is absent, so the "@all" example
+        // from with_defaults() should appear.
+        std::fs::write(&path, r#"{}"#).unwrap();
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.global.tracked.as_deref().map(|v| v.len()), Some(1));
+        assert_eq!(hit_regardless_of_kind(&loaded, "hey @all form up"), Some("@all".into()));
+
+        // A file that deliberately clears the list (an empty array, not an
+        // absent key) must not have "@all" silently reappear in it.
+        std::fs::write(&path, r#"{"global":{"tracked":[]}}"#).unwrap();
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.global.tracked, Some(vec![]), "left exactly as saved");
+    }
+
+    fn hit_regardless_of_kind(s: &Settings, text: &str) -> Option<String> {
+        hit(&s.resolve(None, ChannelKind::Local, "local"), text)
     }
 
     #[test]

@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     use crate::logfmt::testutil::*;
     use crate::prefs::{Mode, OverCap, RateCap};
-    use crate::settings::{Layer, Settings};
+    use crate::settings::{Layer, Settings, TrackedKind, TrackedRule};
     use std::fs::{self, OpenOptions};
     use std::io::Write;
     use std::path::Path;
@@ -316,7 +316,8 @@ mod tests {
     }
 
     fn keywords(words: &[&str]) -> Layer {
-        Layer { keywords: Some(words.iter().map(|w| w.to_string()).collect()), ..Layer::default() }
+        let tracked = words.iter().map(|w| TrackedRule { text: w.to_string(), kind: TrackedKind::Keyword, only_in: vec![], even_when_muted: true }).collect();
+        Layer { tracked: Some(tracked), ..Layer::default() }
     }
 
     fn alerts(events: &[Event]) -> Vec<&Alert> {

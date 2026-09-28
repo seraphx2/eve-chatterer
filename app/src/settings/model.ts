@@ -9,7 +9,7 @@ export type OverlayStyle = "panel" | "strip" | "beacon";
 export type OverCap = "drop" | "fold";
 export type ChannelKind = "local" | "corp" | "alliance" | "fleet" | "private" | "public" | "unknown";
 
-export const CHANNEL_KINDS: ChannelKind[] = ["private", "fleet", "corp", "alliance", "local", "public"];
+export const CHANNEL_KINDS: ChannelKind[] = ["local", "corp", "fleet", "private", "alliance", "public"];
 
 export const CHANNEL_KIND_LABEL: Record<ChannelKind, string> = {
   private: "Private messages",
@@ -31,12 +31,26 @@ export interface RateCap {
   over: OverCap;
 }
 
+export type TrackedKind = "keyword" | "regex";
+
+/** A tracked keyword or regex. Mirrors `core::settings::TrackedRule` — stored
+ * once per character (or once for Defaults), not once per channel layer;
+ * which channels it applies to is a property of the entry (`onlyIn`), not of
+ * where the list lives (owner decision 2026-09-27, see docs/DESIGN.md). */
+export interface TrackedRule {
+  text: string;
+  kind: TrackedKind;
+  /** Empty or absent means every channel kind. */
+  onlyIn?: ChannelKind[];
+  evenWhenMuted: boolean;
+}
+
 /** One settings layer. Every field is optional: unset means "inherit". */
 export interface Layer {
   mode?: Mode;
   ownName?: boolean;
-  keywords?: string[];
-  regexes?: string[];
+  /** Only ever consulted on the global layer or a character's own base layer — see `TrackedRule`. */
+  tracked?: TrackedRule[];
   ignoreOwnMessages?: boolean;
   ignoreSystem?: boolean;
   systemSenders?: string[];
@@ -95,11 +109,26 @@ export interface Pilot {
   live: boolean;
   firstSeen: number;
   channels: Record<string, KnownChannel>;
+  /** This character's own Strip-badge tag, if it has set one; absent means "derive one from the name". */
+  tag?: string;
 }
 
 export interface SettingsData {
   settings: Settings;
   pilots: Pilot[];
+}
+
+const MAX_TAG_LEN = 5;
+
+/** Mirrors `eve_chatterer_core::pilots::tag_from_name`, for a live preview before the round trip to Rust. */
+export function deriveTag(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter((w) => w.length > 0)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, MAX_TAG_LEN)
+    .toUpperCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -133,8 +162,6 @@ export interface Resolved<T> {
 export interface ResolvedPrefs {
   mode: Resolved<Mode>;
   ownName: Resolved<boolean>;
-  keywords: Resolved<string[]>;
-  regexes: Resolved<string[]>;
   ignoreOwnMessages: Resolved<boolean>;
   ignoreSystem: Resolved<boolean>;
   systemSenders: Resolved<string[]>;
@@ -151,8 +178,6 @@ export interface ResolvedPrefs {
 
 const RULESET_DEFAULT = {
   ownName: true,
-  keywords: [] as string[],
-  regexes: [] as string[],
   ignoreOwnMessages: true,
   ignoreSystem: true,
   systemSenders: ["EVE System"],
@@ -212,8 +237,6 @@ export function resolve(s: Settings, pilotId: string | null, kind: ChannelKind, 
   return {
     mode: pick(layers, "mode", "mentions"),
     ownName: pick(layers, "ownName", RULESET_DEFAULT.ownName),
-    keywords: pick(layers, "keywords", RULESET_DEFAULT.keywords),
-    regexes: pick(layers, "regexes", RULESET_DEFAULT.regexes),
     ignoreOwnMessages: pick(layers, "ignoreOwnMessages", RULESET_DEFAULT.ignoreOwnMessages),
     ignoreSystem: pick(layers, "ignoreSystem", RULESET_DEFAULT.ignoreSystem),
     systemSenders: pick(layers, "systemSenders", RULESET_DEFAULT.systemSenders),
@@ -239,10 +262,9 @@ export function peekEditLayer(s: Settings, pilotId: string | null, kind: Channel
 
 // ---------------------------------------------------------------------------
 // The kind-independent "base" layer: global, or one character's own base
-// layer. Tracked keywords are edited here, not per channel kind — "watch for
-// this phrase" is a character-level concern (docs/DESIGN.md, "Settings
-// screen"), even though the same `keywords` field also resolves per kind
-// further down in `resolve()`.
+// layer. Tracked keywords/patterns are edited here, not per channel kind —
+// "watch for this phrase" is a character-level concern, with each entry
+// carrying its own channel scope instead (`TrackedRule.onlyIn`).
 // ---------------------------------------------------------------------------
 
 export function peekBaseLayer(s: Settings, pilotId: string | null): Layer | undefined {

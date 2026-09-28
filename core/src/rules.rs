@@ -8,15 +8,42 @@ use crate::prefs::Mode;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// One tracked keyword or regex, already scoped to the current channel by
+/// `Settings::resolve()` (a `settings::TrackedRule`'s channel targeting is
+/// resolved away before it becomes this) — all that survives into matching is
+/// the text and whether it's still allowed to fire on a muted (`Mode::Nothing`)
+/// channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TrackedTerm {
+    pub text: String,
+    pub even_when_muted: bool,
+}
+
+impl Default for TrackedTerm {
+    fn default() -> Self {
+        TrackedTerm { text: String::new(), even_when_muted: true }
+    }
+}
+
+/// Lets existing plain-string construction (`vec!["jita".into()]`) keep
+/// working: a bare string means "always fires, even when muted" — today's
+/// original, only behavior before the per-entry toggle existed.
+impl From<&str> for TrackedTerm {
+    fn from(s: &str) -> Self {
+        TrackedTerm { text: s.to_string(), even_when_muted: true }
+    }
+}
+
 /// The content rules, after the settings layers have been merged. Matching is case-insensitive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RuleSet {
     /// Alert when the listening pilot's own name appears in the text.
     pub own_name: bool,
-    pub keywords: Vec<String>,
+    pub keywords: Vec<TrackedTerm>,
     /// Advanced: regular expressions matched against the text.
-    pub regexes: Vec<String>,
+    pub regexes: Vec<TrackedTerm>,
     pub ignore_own_messages: bool,
     /// Senders that are never alerted on, chiefly the login message-of-the-day.
     pub ignore_system: bool,
@@ -65,8 +92,10 @@ pub struct CompiledRules {
     system_senders: Vec<String>,
     ignore_senders: Vec<String>,
     always_senders: Vec<String>,
-    keywords: Vec<(String, String)>,
-    regexes: Vec<(String, Regex)>,
+    /// (original text, lowercased text, fires even when the channel is muted)
+    keywords: Vec<(String, String, bool)>,
+    /// (original text, compiled pattern, fires even when the channel is muted)
+    regexes: Vec<(String, Regex, bool)>,
 }
 
 fn lower(v: &[String]) -> Vec<String> {
@@ -78,8 +107,8 @@ impl CompiledRules {
         let regexes = r
             .regexes
             .iter()
-            .filter(|p| !p.trim().is_empty())
-            .map(|p| Regex::new(&format!("(?i){p}")).map(|re| (p.clone(), re)))
+            .filter(|t| !t.text.trim().is_empty())
+            .map(|t| Regex::new(&format!("(?i){}", t.text)).map(|re| (t.text.clone(), re, t.even_when_muted)))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(CompiledRules {
             own_name: r.own_name,
@@ -91,8 +120,8 @@ impl CompiledRules {
             keywords: r
                 .keywords
                 .iter()
-                .filter(|k| !k.trim().is_empty())
-                .map(|k| (k.trim().to_string(), k.trim().to_lowercase()))
+                .filter(|k| !k.text.trim().is_empty())
+                .map(|k| (k.text.trim().to_string(), k.text.trim().to_lowercase(), k.even_when_muted))
                 .collect(),
             regexes,
         })
@@ -113,10 +142,14 @@ impl CompiledRules {
     }
 
     /// The independent tracking layer: "always" senders, keywords, regexes.
-    /// Checked under every `Mode`, `Nothing` included — this is the pilot
-    /// explicitly asking to hear about one thing regardless of how the
-    /// channel is otherwise configured (docs/DESIGN.md, "Notification modes").
-    fn tracked(&self, c: &LineCtx) -> Option<Reason> {
+    /// Checked under every `Mode` by default, `Nothing` included — this is
+    /// the pilot explicitly asking to hear about one thing regardless of how
+    /// the channel is otherwise configured (docs/DESIGN.md, "Notification
+    /// modes") — except a keyword/regex whose own `even_when_muted` is false,
+    /// which a muted channel silences like everything else. `muted` is only
+    /// ever true for `Mode::Nothing`; "always" senders are unaffected, since
+    /// that's a different, always-on feature.
+    fn tracked(&self, c: &LineCtx, muted: bool) -> Option<Reason> {
         if self.ignored(c) {
             return None;
         }
@@ -125,10 +158,10 @@ impl CompiledRules {
             return Some(Reason::AlwaysSender(c.sender.trim().to_string()));
         }
         let text = c.text.to_lowercase();
-        if let Some((k, _)) = self.keywords.iter().find(|(_, lk)| text.contains(lk)) {
+        if let Some((k, _, _)) = self.keywords.iter().find(|(_, lk, even)| (*even || !muted) && text.contains(lk)) {
             return Some(Reason::Keyword(k.clone()));
         }
-        if let Some((p, _)) = self.regexes.iter().find(|(_, re)| re.is_match(c.text)) {
+        if let Some((p, _, _)) = self.regexes.iter().find(|(_, re, even)| (*even || !muted) && re.is_match(c.text)) {
             return Some(Reason::Regex(p.clone()));
         }
         None
@@ -140,23 +173,25 @@ impl CompiledRules {
 
     /// Own name plus the tracking layer — everything that can fire outside of
     /// `Mode::Everything`. Kept public for callers that just want "does this
-    /// line match anything", independent of a channel's mode. Own name is
-    /// checked before keywords/regexes, so a line matching both is reported
-    /// as a mention.
+    /// line match anything", independent of a channel's mode; not muted,
+    /// since there's no channel mode here to be muted. Own name is checked
+    /// before keywords/regexes, so a line matching both is reported as a
+    /// mention.
     pub fn evaluate(&self, c: &LineCtx) -> Option<Reason> {
-        self.mentioned(c).or_else(|| self.tracked(c))
+        self.mentioned(c).or_else(|| self.tracked(c, false))
     }
 
     /// Applies a channel `Mode`. The tracking layer (`tracked`) runs under
-    /// every mode; `Nothing` gets *only* that layer, `Mentions` adds the
-    /// pilot's own name, `Everything` alerts regardless but still prefers a
-    /// specific tracked reason over the generic "every line" one.
+    /// every mode; `Nothing` gets *only* that layer (muted, so a term with
+    /// `even_when_muted: false` is silent too), `Mentions` adds the pilot's
+    /// own name, `Everything` alerts regardless but still prefers a specific
+    /// tracked reason over the generic "every line" one.
     pub fn evaluate_mode(&self, c: &LineCtx, mode: Mode) -> Option<Reason> {
         match mode {
-            Mode::Nothing => self.tracked(c),
+            Mode::Nothing => self.tracked(c, true),
             Mode::Mentions => self.evaluate(c),
             Mode::Everything => self
-                .tracked(c)
+                .tracked(c, false)
                 .or(self.mentioned(c))
                 .or_else(|| (!self.ignored(c)).then(|| Reason::AlwaysChannel(c.channel_name.trim().to_string()))),
         }
@@ -214,9 +249,9 @@ mod tests {
 
     #[test]
     fn rule_sets_deserialize_with_missing_fields() {
-        let r: RuleSet = serde_json::from_str(r#"{"keywords":["a"]}"#).unwrap();
+        let r: RuleSet = serde_json::from_str(r#"{"keywords":[{"text":"a"}]}"#).unwrap();
         assert!(r.own_name && r.ignore_system);
-        assert_eq!(r.keywords, ["a"]);
+        assert_eq!(r.keywords, vec![TrackedTerm { text: "a".into(), even_when_muted: true }], "a missing even_when_muted defaults to true");
     }
 
     fn mode(rules: RuleSet, m: Mode, sender: &str, text: &str) -> Option<Reason> {
@@ -236,6 +271,23 @@ mod tests {
         assert_eq!(mode(r(), Mode::Mentions, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
         assert_eq!(mode(r(), Mode::Everything, "Bob", "hello"), Some(Reason::AlwaysChannel("Fleet".into())), "no tracked reason applies, so the generic one does");
         assert_eq!(mode(r(), Mode::Everything, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())), "a tracked reason is more specific than the generic one");
+    }
+
+    #[test]
+    fn even_when_muted_false_opts_a_term_out_of_the_default_nothing_override() {
+        // Owner request 2026-09-27: not every tracked term should have to
+        // override a muted channel — a per-term toggle, default on (matching
+        // the original, only behavior above).
+        let r = || RuleSet {
+            keywords: vec![TrackedTerm { text: "jita".into(), even_when_muted: false }],
+            regexes: vec![TrackedTerm { text: r"\bgank\b".into(), even_when_muted: false }],
+            ..RuleSet::default()
+        };
+        assert_eq!(mode(r(), Mode::Nothing, "Bob", "selling in jita"), None, "muted, and this term doesn't override it");
+        assert_eq!(mode(r(), Mode::Nothing, "Bob", "we got gank"), None);
+        // The same channel un-muted still tracks it normally.
+        assert_eq!(mode(r(), Mode::Mentions, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
+        assert_eq!(mode(r(), Mode::Everything, "Bob", "we got gank"), Some(Reason::Regex(r"\bgank\b".into())));
     }
 
     #[test]

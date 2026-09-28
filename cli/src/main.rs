@@ -23,7 +23,7 @@ use eve_chatterer_core::prefs::{DeliveryMode, OverCap, Suppression};
 use eve_chatterer_core::presence::Snapshot;
 use eve_chatterer_core::router::{self, Anchor, Decision, Delivery, Outcome, RouterConfig, SuppressedBy};
 use eve_chatterer_core::rules::Reason;
-use eve_chatterer_core::settings::{Settings, SettingsBook};
+use eve_chatterer_core::settings::{Settings, SettingsBook, TrackedKind, TrackedRule};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -197,11 +197,16 @@ fn main() {
         }),
         None => Settings::with_defaults(),
     };
-    if !args.keywords.is_empty() {
-        settings.global.keywords = Some(args.keywords.clone());
-    }
-    if !args.regexes.is_empty() {
-        settings.global.regexes = Some(args.regexes.clone());
+    if !args.keywords.is_empty() || !args.regexes.is_empty() {
+        let mut tracked: Vec<TrackedRule> = args
+            .keywords
+            .iter()
+            .map(|w| TrackedRule { text: w.clone(), kind: TrackedKind::Keyword, only_in: vec![], even_when_muted: true })
+            .collect();
+        tracked.extend(
+            args.regexes.iter().map(|p| TrackedRule { text: p.clone(), kind: TrackedKind::Regex, only_in: vec![], even_when_muted: true }),
+        );
+        settings.global.tracked = Some(tracked);
     }
     settings.global.suppression = args.suppress.or(settings.global.suppression);
     settings.global.delivery = args.delivery.or(settings.global.delivery);
