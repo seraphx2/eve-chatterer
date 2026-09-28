@@ -63,10 +63,16 @@ fn remove_known_channel(app: AppHandle, state: State<'_, AppState>, pilot_id: St
     engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
+/// Sets (or, given blank/whitespace, clears) a character's own Strip-badge
+/// tag. `PilotRegistry::set_tag` normalizes it (trim, cap, uppercase), so
+/// nothing needs validating here first.
 #[tauri::command]
-async fn send_test(app: AppHandle, kind: String) -> Result<(), String> {
-    testalerts::send(&app, &kind);
-    Ok(())
+fn set_pilot_tag(app: AppHandle, state: State<'_, AppState>, pilot_id: String, tag: String) -> Result<(), String> {
+    let mut guard = state.engine.lock().unwrap();
+    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+    engine.pilots_mut().set_tag(&pilot_id, Some(&tag));
+    let pilots_path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pilots.json");
+    engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
 /// The overlay page calls this once it is listening for alerts.
@@ -89,11 +95,26 @@ fn open_settings(app: &AppHandle) {
         }
         let built = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html".into()))
             .title("EVE Chatterer")
-            .inner_size(760.0, 680.0)
-            .min_inner_size(520.0, 420.0)
+            .inner_size(1100.0, 800.0)
+            .min_inner_size(1100.0, 800.0)
+            .center()
             .build();
-        if let Err(e) = built {
-            eprintln!("could not open the settings window: {e}");
+        match built {
+            // Hide instead of letting the OS close button tear the webview
+            // down, so the next open reuses the warm one above (instant)
+            // instead of a full reload (Svelte remount + settings refetched
+            // over IPC). Only the tray's "Quit" (`app.exit`) actually ends
+            // the process; that bypasses window events entirely.
+            Ok(w) => {
+                let hide = w.clone();
+                w.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = hide.hide();
+                    }
+                });
+            }
+            Err(e) => eprintln!("could not open the settings window: {e}"),
         }
     });
 }
@@ -106,12 +127,11 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| open_settings(app)))
         .plugin(tauri_plugin_notification::init())
         .manage(AppState::new())
-        .invoke_handler(tauri::generate_handler![get_status, send_test, overlay_ready, get_settings_data, save_settings, remove_known_channel])
+        .invoke_handler(tauri::generate_handler![get_status, overlay_ready, get_settings_data, save_settings, remove_known_channel, set_pilot_tag])
         .setup(|app| {
             let settings_i = MenuItem::with_id(app, "tray-settings", "Settings…", true, None::<&str>)?;
-            let test_i = MenuItem::with_id(app, "tray-test", "Try the overlays", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "tray-quit", "Quit EVE Chatterer", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&settings_i, &test_i, &PredefinedMenuItem::separator(app)?, &quit_i])?;
+            let menu = Menu::with_items(app, &[&settings_i, &PredefinedMenuItem::separator(app)?, &quit_i])?;
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled window icon").clone())
@@ -120,10 +140,6 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "tray-settings" => open_settings(app),
-                    "tray-test" => {
-                        let app = app.clone();
-                        std::thread::spawn(move || testalerts::send(&app, "all"));
-                    }
                     "tray-quit" => app.exit(0),
                     _ => {}
                 })
