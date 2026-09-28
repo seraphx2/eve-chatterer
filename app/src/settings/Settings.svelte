@@ -13,8 +13,13 @@
   let data = $state<SettingsData | null>(null);
   let loadError = $state("");
   let saveError = $state("");
-  let dirty = $state(false);
-  let saving = $state(false);
+  let dirty = $state(false); // an edit exists that the last save doesn't reflect yet
+  let saving = $state(false); // a save_settings call is in flight right now
+
+  const SAVE_DEBOUNCE_MS = 600;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let saveAgain = false; // another edit landed while a save was already in flight
+
   let page = $state<Page>({ kind: "defaults" });
   let pilotsCollapsed = $state(false);
   let version = $state("");
@@ -29,12 +34,23 @@
     }
   }
 
+  // No save button: every edit schedules an autosave a moment later, so a
+  // burst of changes (dragging a slider, typing a keyword) collapses into
+  // one write instead of one per keystroke.
   function onedit() {
     dirty = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, SAVE_DEBOUNCE_MS);
   }
 
   async function save() {
     if (!data) return;
+    if (saving) {
+      // A save is already in flight for a slightly older snapshot; this
+      // edit will be picked up when it finishes, not lost.
+      saveAgain = true;
+      return;
+    }
     saving = true;
     saveError = "";
     try {
@@ -44,6 +60,20 @@
       saveError = String(e);
     } finally {
       saving = false;
+      if (saveAgain) {
+        saveAgain = false;
+        save();
+      }
+    }
+  }
+
+  // If the window is about to be hidden (its close button, per lib.rs's
+  // hide-not-destroy), send a pending edit immediately rather than leaving
+  // it to a debounce timer that a backgrounded page may delay.
+  function flushIfDirty() {
+    if (dirty && !saving) {
+      clearTimeout(saveTimer);
+      save();
     }
   }
 
@@ -57,7 +87,12 @@
     const t = setInterval(() => {
       if (!dirty) load();
     }, 4000);
-    return () => clearInterval(t);
+    document.addEventListener("visibilitychange", flushIfDirty);
+    return () => {
+      clearInterval(t);
+      clearTimeout(saveTimer);
+      document.removeEventListener("visibilitychange", flushIfDirty);
+    };
   });
 
   const sortedPilots = $derived(
@@ -76,6 +111,32 @@
 <div class="app">
   <nav class="sidebar">
     <div class="search"><input placeholder="Search characters…" bind:value={search} /></div>
+    <div class="top-items lead">
+      <button type="button" class="row" class:active={page.kind === "general"} style="width:100%;text-align:left" onclick={() => (page = { kind: "general" })}>
+        <span class="caret"></span>
+        <svg class="icon" viewBox="0 0 16 16" fill="none"
+          ><circle cx="8" cy="8" r="2.3" stroke="#7e939f" stroke-width="1.3" /><path
+            d="M8 2v1.6M8 12.4V14M14 8h-1.6M3.6 8H2M12.1 3.9l-1.1 1.1M5 10l-1.1 1.1M12.1 12.1L11 11M5 6l-1.1-1.1"
+            stroke="#7e939f"
+            stroke-width="1.2"
+            stroke-linecap="round"
+          /></svg
+        >
+        <span class="label">General</span>
+      </button>
+      <button type="button" class="row" class:active={page.kind === "audio"} style="width:100%;text-align:left" onclick={() => (page = { kind: "audio" })}>
+        <span class="caret"></span>
+        <svg class="icon" viewBox="0 0 16 16" fill="none"
+          ><path d="M2 6.5h2.4L8 3.6v8.8L4.4 9.5H2z" stroke="#7e939f" stroke-width="1.2" stroke-linejoin="round" /><path
+            d="M10.6 5.8c1 .8 1 3.6 0 4.4M12.4 4.2c1.9 1.7 1.9 6 0 7.7"
+            stroke="#7e939f"
+            stroke-width="1.2"
+            stroke-linecap="round"
+          /></svg
+        >
+        <span class="label">Audio</span>
+      </button>
+    </div>
     <div class="tree">
       <div class="group" class:collapsed={pilotsCollapsed}>
         <button type="button" class="row" style="width:100%;text-align:left" onclick={() => (pilotsCollapsed = !pilotsCollapsed)}>
@@ -105,30 +166,6 @@
       </div>
     </div>
     <div class="top-items">
-      <button type="button" class="row" class:active={page.kind === "audio"} style="width:100%;text-align:left" onclick={() => (page = { kind: "audio" })}>
-        <span class="caret"></span>
-        <svg class="icon" viewBox="0 0 16 16" fill="none"
-          ><path d="M2 6.5h2.4L8 3.6v8.8L4.4 9.5H2z" stroke="#7e939f" stroke-width="1.2" stroke-linejoin="round" /><path
-            d="M10.6 5.8c1 .8 1 3.6 0 4.4M12.4 4.2c1.9 1.7 1.9 6 0 7.7"
-            stroke="#7e939f"
-            stroke-width="1.2"
-            stroke-linecap="round"
-          /></svg
-        >
-        <span class="label">Audio</span>
-      </button>
-      <button type="button" class="row" class:active={page.kind === "general"} style="width:100%;text-align:left" onclick={() => (page = { kind: "general" })}>
-        <span class="caret"></span>
-        <svg class="icon" viewBox="0 0 16 16" fill="none"
-          ><circle cx="8" cy="8" r="2.3" stroke="#7e939f" stroke-width="1.3" /><path
-            d="M8 2v1.6M8 12.4V14M14 8h-1.6M3.6 8H2M12.1 3.9l-1.1 1.1M5 10l-1.1 1.1M12.1 12.1L11 11M5 6l-1.1-1.1"
-            stroke="#7e939f"
-            stroke-width="1.2"
-            stroke-linecap="round"
-          /></svg
-        >
-        <span class="label">General</span>
-      </button>
       <button type="button" class="row" class:active={page.kind === "about"} style="width:100%;text-align:left" onclick={() => (page = { kind: "about" })}>
         <span class="caret"></span>
         <svg class="icon" viewBox="0 0 16 16" fill="none"
@@ -162,8 +199,7 @@
     </main>
     {#if data}
       <div class="savebar">
-        <span class="msg" class:error={!!saveError}>{saveError || (dirty ? "Unsaved changes" : "All changes saved")}</span>
-        <button type="button" class="btn primary" disabled={!dirty || saving} onclick={save}>{saving ? "Saving…" : "Save"}</button>
+        <span class="msg" class:error={!!saveError}>{saveError || (saving ? "Saving…" : dirty ? "Unsaved changes" : "All changes saved")}</span>
       </div>
     {/if}
   </div>

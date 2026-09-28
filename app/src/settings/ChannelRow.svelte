@@ -52,7 +52,7 @@
 <div class="kind-row">
   <div class="kind-head">
     <span class="kind-name">{label}{#if meta}<span class="hint">{meta}</span>{/if}</span>
-    {#if onremove}<button type="button" class="revert" onclick={onremove}>Remove</button>{/if}
+    {#if onremove}<button type="button" class="revert danger" onclick={onremove}>Remove</button>{/if}
   </div>
   <div class="kind-body">
     <div class="field">

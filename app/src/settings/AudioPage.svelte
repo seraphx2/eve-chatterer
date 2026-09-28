@@ -1,7 +1,7 @@
 <h1>Audio</h1>
 <p class="lede">
-  Decides which sound file plays. Whether a given channel makes a sound at all — for any character, any channel, right down to muting just
-  one — is that channel's own Sound field, next to its Mode and Style.
+  This page only decides which file plays. Whether a channel makes any sound at all is a separate setting — each channel's own Sound
+  toggle.
 </p>
 <p class="section-note">Not wired up yet — the layout is settled, but choosing a file doesn't do anything yet. Every channel's Sound toggle above is already real.</p>
 <section class="card">

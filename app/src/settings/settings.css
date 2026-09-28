@@ -20,6 +20,30 @@
 * {
   box-sizing: border-box;
 }
+/* WebView2 is Chromium, so the OS scrollbar never shows here anyway - style
+   it to match instead of leaving Chromium's flat default gray. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--edge-hi) var(--sidebar);
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: var(--sidebar);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--panel-hi);
+  border: 2px solid var(--sidebar);
+  border-radius: 6px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--edge-hi);
+}
+*::-webkit-scrollbar-corner {
+  background: var(--sidebar);
+}
 /* Buttons keep their native beveled border unless it's explicitly turned
    off — every class below sets its own look, but this catches anything that
    doesn't, so nothing can ship with a stray "raised" default border. */
@@ -156,6 +180,13 @@ p {
   padding: 4px 6px 10px;
   border-top: 1px solid var(--edge);
 }
+/* Audio/General sit above Characters instead of below it - easier to notice,
+   and they're app-wide settings, not one more thing nested in the tree. */
+.top-items.lead {
+  padding: 4px 6px 10px;
+  border-top: none;
+  border-bottom: 1px solid var(--edge);
+}
 .sidebar footer {
   padding: 8px 12px;
   border-top: 1px solid var(--edge);
@@ -233,7 +264,10 @@ section.card {
 }
 .kind-body {
   display: flex;
-  align-items: center;
+  /* top-align every field, not center: a field with a "use default" link is
+     taller than one without, and centering made the shorter fields' controls
+     drift away from the row the rest of the fields line up on. */
+  align-items: flex-start;
   gap: 22px;
   margin-top: 10px;
   flex-wrap: wrap;
@@ -244,8 +278,9 @@ section.card {
   gap: 5px;
 }
 .field .flabel {
-  font-size: 11px;
-  color: var(--ink-faint);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-dim);
   display: flex;
   align-items: center;
 }
@@ -282,7 +317,8 @@ section.card {
 }
 
 select,
-.num {
+.num,
+.tag-input {
   font: 400 12.5px var(--font);
   color: var(--ink);
   background: #0c141a;
@@ -293,6 +329,15 @@ select,
 .num {
   width: 46px;
   text-align: center;
+}
+.tag-input {
+  width: 100px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tag-input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 label.check {
   display: flex;
@@ -321,8 +366,8 @@ label.check input {
   vertical-align: middle;
 }
 .revert {
-  font: 400 10.5px var(--font);
-  color: var(--ink-faint);
+  font: 600 12px var(--font);
+  color: var(--ink-dim);
   background: none;
   cursor: pointer;
   text-decoration: underline;
@@ -332,6 +377,13 @@ label.check input {
 }
 .revert:hover {
   color: var(--accent);
+}
+.revert.danger {
+  color: var(--danger);
+}
+.revert.danger:hover {
+  color: var(--danger);
+  opacity: 0.8;
 }
 
 /* pilot page extras */
@@ -355,8 +407,14 @@ label.check input {
   box-shadow: inset 0 0 0 1px var(--edge);
 }
 .pilot-id {
-  color: var(--ink-faint);
-  font-size: 12px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+.tag-field .flabel {
+  font-size: 13px;
+  color: var(--ink-dim);
+  font-weight: 600;
 }
 
 .chip {
@@ -364,15 +422,113 @@ label.check input {
   box-shadow: inset 0 0 0 1px var(--edge);
   padding: 5px 10px;
   font-size: 12.5px;
+  /* `button.btn`'s `font:` shorthand (below) resets line-height to "normal"
+     instead of inheriting the page's 1.5, so without an explicit, matching
+     value here the two ended up different heights at the same padding. */
+  line-height: 1.2;
   display: inline-flex;
   align-items: center;
 }
 .chip.own {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
 }
-.chip-add {
+.chip.regex-chip {
+  font-family: "Consolas", "SFMono-Regular", ui-monospace, monospace;
+}
+/* Shared between a regex chip's own delimiters and the Add dialog's input
+   decoration, so a pattern reads the same way in both places. */
+.regex-delim {
+  color: var(--mention);
+  font-weight: 700;
+}
+.regex-flag {
+  color: var(--ink-faint);
+  font-family: "Consolas", "SFMono-Regular", ui-monospace, monospace;
+  font-size: 11px;
+  margin-left: 2px;
+  cursor: help;
+}
+/* One continuous box that the slash decorations sit inside, so they visually
+   "hug" the pattern text and grow with it instead of looking like separate
+   static labels next to a plain input. */
+.regex-input-wrap {
+  display: flex;
+  align-items: center;
+  background: #0c141a;
+  box-shadow: inset 0 0 0 1px var(--edge);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.regex-input-wrap.regex {
+  font-family: "Consolas", "SFMono-Regular", ui-monospace, monospace;
+}
+.regex-input-wrap:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.regex-input-wrap input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  box-shadow: none;
+  border: none;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+}
+.regex-input-wrap input:focus {
+  outline: none;
+}
+/* A chip's own text, made clickable (opens it for editing) without looking
+   like a nested button inside another control. */
+.chip-text {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.chip-text:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.chip-scope {
+  color: var(--ink-faint);
+  font-size: 11px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.dialog-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+.scope-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.scope-chip {
+  font: 500 12px var(--font);
+  color: var(--ink-dim);
+  background: #0c141a;
+  box-shadow: inset 0 0 0 1px var(--edge);
+  padding: 5px 10px;
+  cursor: pointer;
+  border: none;
+}
+.scope-chip.sel {
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* `button.btn`'s own element+class rule below otherwise outranks a plain
+   .chip-add class selector, so the button rendered taller than a chip. */
+button.btn.chip-add {
   padding: 5px 12px;
   font-size: 12.5px;
+  line-height: 1.2;
 }
 
 button.btn {
@@ -391,6 +547,10 @@ button.btn.primary {
   color: #dff3fb;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
 }
+button.btn.primary.danger {
+  color: #ffe4d9;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 60%, transparent);
+}
 button.btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -398,6 +558,53 @@ button.btn:focus-visible {
 button.btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* ---------- Dialog (replaces the browser's prompt()/confirm()) ---------- */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 9, 12, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.dialog {
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px var(--edge-hi),
+    0 20px 50px rgba(0, 0, 0, 0.5);
+  padding: 20px;
+}
+.dialog h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dialog-msg {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.dialog-highlight {
+  color: var(--accent);
+  font-weight: 600;
+}
+.dialog-input {
+  width: 100%;
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: 4px;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 /* ---------- Audio page ---------- */
