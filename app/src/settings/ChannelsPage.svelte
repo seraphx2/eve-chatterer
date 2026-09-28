@@ -3,6 +3,7 @@
   import { CHANNEL_KINDS, CHANNEL_KIND_LABEL, deriveTag, relativeTime, type Pilot, type Settings } from "./model";
   import ChannelRow from "./ChannelRow.svelte";
   import TrackedListSection from "./TrackedListSection.svelte";
+  import SenderListSection from "./SenderListSection.svelte";
   import Dialog from "./Dialog.svelte";
 
   let { settings, pilotId, pilot, onedit }: { settings: Settings; pilotId: string | null; pilot?: Pilot; onedit: () => void } = $props();
@@ -105,6 +106,8 @@
 </section>
 
 <TrackedListSection {settings} {pilotId} {onedit} />
+
+<SenderListSection {settings} {pilotId} {onedit} />
 
 {#if pilotId !== null}
   <h2>Public channels</h2>
