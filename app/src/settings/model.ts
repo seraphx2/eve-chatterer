@@ -221,8 +221,8 @@ function pick<K extends keyof Layer>(
   return result;
 }
 
-/** Style resolves to `null` ("Auto") rather than some forced value when
- * nothing sets it anywhere, so it can't go through `pick`'s NonNullable fallback. */
+/** Style resolves to `null` ("Default" in the UI) rather than some forced
+ * value when nothing sets it anywhere, so it can't go through `pick`'s NonNullable fallback. */
 function pickStyle(layers: [LayerRef, Layer][]): Resolved<OverlayStyle | null> {
   let result: Resolved<OverlayStyle | null> = { value: null, layer: null };
   for (const [ref, layer] of layers) {

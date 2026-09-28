@@ -71,7 +71,7 @@
         value={resolved.style.value ?? "auto"}
         onchange={(e) => set("style", e.currentTarget.value === "auto" ? undefined : (e.currentTarget.value as OverlayStyle))}
       >
-        <option value="auto">Auto</option>
+        <option value="auto">Default</option>
         <option value="beacon">Beacon</option>
         <option value="panel">Panel</option>
         <option value="strip">Strip</option>
