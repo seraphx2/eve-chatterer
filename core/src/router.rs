@@ -106,12 +106,37 @@ pub struct Decision {
     pub caps: Vec<(LayerKey, RateCap)>,
 }
 
-fn anchor_for(client: Option<&ClientState>) -> Anchor {
-    match client {
-        None => Anchor::Unknown,
-        Some(c) if c.on_screen() && !c.covers_monitor() => Anchor::FollowWindow { hwnd: c.hwnd },
-        Some(c) => c.monitor.map_or(Anchor::Unknown, Anchor::Monitor),
+/// Where to draw the alert, in priority order:
+/// 1. Wherever the user is actually focused, if that client is on screen —
+///    that always wins, even when the alerted pilot's *own* client is also
+///    genuinely visible (e.g. each client fixed to its own monitor in a
+///    multi-boxing setup). Showing an alert on a screen the user isn't
+///    looking at defeats the point of an alert. Found live (2026-09-27,
+///    owner: "im on psianna, and jarna's Local notifications are still
+///    showing up on Jarna's screen" — a follow-on to the same-day anchor fix
+///    below, which only covered a *hidden* alerted client, not one visible
+///    on its own separate screen while unfocused).
+/// 2. Otherwise, the alerted pilot's own window if it is on screen — a
+///    neutral choice when nobody in particular is focused.
+/// 3. Otherwise, any other client that happens to be on screen — still
+///    better than a screen nobody can see.
+/// 4. Otherwise, the alerted pilot's own last known monitor, as a
+///    least-bad guess (2026-09-27: originally the *only* rule, which put a
+///    hidden pilot's alert on a screen nobody could see).
+fn anchor_for(client: Option<&ClientState>, snap: &Snapshot) -> Anchor {
+    fn on_its_own_screen(c: &ClientState) -> Anchor {
+        if c.covers_monitor() { c.monitor.map_or(Anchor::Unknown, Anchor::Monitor) } else { Anchor::FollowWindow { hwnd: c.hwnd } }
     }
+    if let Some(f) = snap.focused_client().filter(|f| f.on_screen()) {
+        return on_its_own_screen(f);
+    }
+    if let Some(c) = client.filter(|c| c.on_screen()) {
+        return on_its_own_screen(c);
+    }
+    if let Some(v) = snap.clients.iter().find(|c| c.on_screen()) {
+        return on_its_own_screen(v);
+    }
+    client.and_then(|c| c.monitor).map_or(Anchor::Unknown, Anchor::Monitor)
 }
 
 pub fn route(alert: &Alert, snap: &Snapshot, cfg: &RouterConfig) -> Vec<Decision> {
@@ -156,7 +181,7 @@ fn deliveries(
 ) -> Vec<Delivery> {
     let mode = prefs.delivery;
     let style = prefs.style.unwrap_or_else(|| cfg.styles.for_reason(reason));
-    let overlay = || Delivery::Overlay { anchor: anchor_for(client), style };
+    let overlay = || Delivery::Overlay { anchor: anchor_for(client, snap), style };
     let toast = || Delivery::Toast { switch_to: pilot.to_string() };
     let toast_ok = snap.notifications_ok;
     // A toast that Windows would hold back falls back to an overlay.
@@ -243,7 +268,11 @@ mod tests {
         let s = snap(two(), Some("Jarna"));
         let d = route(&alert(&["Jarna", "Psianna"]), &s, &RouterConfig::default());
         assert_eq!(only(&d, "Jarna"), Outcome::Suppressed(SuppressedBy::FocusedPilot));
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
+        // Psianna's own monitor (MON_R) is genuinely on screen too, but the
+        // user is looking at Jarna's - the alert must land there, not on a
+        // screen nobody is watching just because it happens to belong to the
+        // pilot it's about.
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
     }
 
     #[test]
@@ -310,11 +339,45 @@ mod tests {
     }
 
     #[test]
-    fn a_minimized_fullscreen_client_still_gets_its_alert_on_its_last_monitor() {
+    fn a_hidden_pilots_alert_anchors_to_whichever_client_the_user_is_looking_at() {
+        // Psianna is minimized (not on screen); the user is looking at Jarna.
+        // The alert must land on Jarna's screen, not on Psianna's own,
+        // last-known, currently-invisible one — that's the whole point of an
+        // alert about a pilot you aren't looking at.
         let mut clients = two();
         clients[1].minimized = true;
         clients[1].rect = None; // monitor stays: last known
         let d = route(&alert(&["Psianna"]), &snap(clients, Some("Jarna")), &RouterConfig::default());
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
+    }
+
+    #[test]
+    fn a_hidden_pilots_alert_still_borrows_a_visible_clients_screen_without_focus() {
+        // Nobody is focused (say, the user alt-tabbed to a third, non-EVE
+        // app), but Jarna's windowed client is still sitting visibly on
+        // screen. That is strictly better to anchor to than Psianna's own,
+        // definitely-invisible last known spot.
+        let mut clients = two();
+        clients[1].minimized = true;
+        clients[1].rect = None;
+        let d = route(&alert(&["Psianna"]), &snap(clients, None), &RouterConfig::default());
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
+    }
+
+    #[test]
+    fn a_hidden_pilots_alert_falls_back_to_its_own_last_monitor_when_nothing_is_visible_at_all() {
+        // Every client is hidden: no screen to borrow, so fall back to the
+        // alerted pilot's own last known monitor as the least-bad guess.
+        // (Blocked toast forces the overlay path so there is an anchor to
+        // check; Auto would otherwise just toast here, same as the "no
+        // client on screen" test above.)
+        let mut clients = two();
+        clients[0].minimized = true;
+        clients[1].minimized = true;
+        clients[1].rect = None;
+        let mut s = snap(clients, None);
+        s.notifications_ok = false;
+        let d = route(&alert(&["Psianna"]), &s, &RouterConfig::default());
         assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
     }
 
@@ -333,9 +396,23 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_client_still_delivers_with_an_unknown_anchor() {
+    fn an_unknown_client_still_borrows_a_visible_viewers_screen() {
+        // No client at all is known for this pilot, but Jarna's is visible;
+        // same principle as a hidden pilot's alert - anchor to what the user
+        // can actually see rather than nowhere in particular.
         let d = route(&alert(&["Ghost"]), &snap(two(), None), &RouterConfig::default());
-        // Auto with clients on screen -> overlay; no client for this pilot -> unknown anchor.
+        assert_eq!(only(&d, "Ghost"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
+    }
+
+    #[test]
+    fn an_unknown_client_falls_back_to_an_unknown_anchor_when_nothing_is_visible() {
+        let mut clients = two();
+        for c in &mut clients {
+            c.minimized = true;
+        }
+        let mut s = snap(clients, None);
+        s.notifications_ok = false;
+        let d = route(&alert(&["Ghost"]), &s, &RouterConfig::default());
         assert_eq!(only(&d, "Ghost"), Outcome::Deliver(vec![ov(Anchor::Unknown)]));
     }
 

@@ -96,6 +96,11 @@ impl Snapshot {
     pub fn is_focused(&self, character: &str) -> bool {
         self.focused.as_deref().is_some_and(|f| f.eq_ignore_ascii_case(character))
     }
+
+    /// The client the user is actually looking at, if any.
+    pub fn focused_client(&self) -> Option<&ClientState> {
+        self.focused.as_deref().and_then(|f| self.client(f))
+    }
 }
 
 /// Explorer shell surfaces that briefly take the foreground during alt-tab,
