@@ -182,7 +182,7 @@ b {
   width: 420px;
   height: 34px;
   display: grid;
-  grid-template-columns: 26px auto 1fr auto;
+  grid-template-columns: auto auto 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 0 8px 0 0;
@@ -192,9 +192,13 @@ b {
 }
 .strip .chip {
   height: 100%;
+  min-width: 26px;
+  padding: 0 6px;
   display: grid;
   place-items: center;
-  font: 600 13px var(--font);
+  font: 600 12px var(--font);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
   color: var(--pilot);
   background: color-mix(in srgb, var(--pilot) 14%, transparent);
 }

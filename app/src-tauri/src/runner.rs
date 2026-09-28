@@ -6,7 +6,7 @@ use crate::state::{AppState, PilotView};
 use eve_chatterer_core::engine::{Alert, Engine, EngineConfig, Event};
 use eve_chatterer_core::governor::Governor;
 use eve_chatterer_core::paths;
-use eve_chatterer_core::pilots::PilotRegistry;
+use eve_chatterer_core::pilots::{tag_from_name, PilotRegistry};
 use eve_chatterer_core::prefs::{OverCap, OverlayStyle};
 use eve_chatterer_core::presence::{Rect, Sampler, Snapshot};
 use eve_chatterer_core::router::{self, Anchor, Decision, Delivery, Outcome, RouterConfig};
@@ -28,6 +28,19 @@ const ACCENTS: [&str; 6] = ["#62d1a5", "#a58af0", "#6cb6f0", "#e58aa8", "#d9c15a
 pub fn accent_for(name: &str) -> String {
     let h = name.to_lowercase().bytes().fold(0xcbf29ce4u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
     ACCENTS[h as usize % ACCENTS.len()].to_string()
+}
+
+/// The Strip badge text for an alert: the pilot's own tag if the registry has
+/// one for it, otherwise derived from the name. Works with no matching pilot
+/// (a synthetic test alert, or mid-startup) by falling back to the
+/// name-derived tag either way.
+pub fn tag_for(app: &AppHandle, pilot_id: Option<&str>, pilot_name: &str) -> String {
+    let state = app.state::<AppState>();
+    let guard = state.engine.lock().unwrap();
+    pilot_id
+        .and_then(|id| guard.as_ref()?.pilots().get(id))
+        .map(eve_chatterer_core::pilots::Pilot::display_tag)
+        .unwrap_or_else(|| tag_from_name(pilot_name))
 }
 
 pub fn style_name(s: OverlayStyle) -> &'static str {
@@ -256,6 +269,7 @@ impl Runner {
                                     id: state.overlays.next_id(),
                                     style: style_name(*style),
                                     pilot: d.pilot_name.clone(),
+                                    tag: tag_for(&self.app, d.pilot_id.as_deref(), &d.pilot_name),
                                     accent: accent_for(&d.pilot_name),
                                     channel: alert.channel_name.clone(),
                                     sender: alert.line.sender.clone(),

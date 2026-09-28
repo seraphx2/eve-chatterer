@@ -6,6 +6,8 @@ export interface Alert {
   id: number;
   style: Style;
   pilot: string;
+  /** The Strip style's badge text: the pilot's own tag, or one derived from its name. */
+  tag: string;
   /** The pilot's accent color (CSS). */
   accent: string;
   channel: string;

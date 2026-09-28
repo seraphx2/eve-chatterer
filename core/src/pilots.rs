@@ -29,6 +29,9 @@ pub struct KnownChannel {
     pub last_seen: i64,
 }
 
+/// Longest a tag (own or derived) is ever shown as, in the Strip overlay's badge.
+const MAX_TAG_LEN: usize = 5;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Pilot {
@@ -41,6 +44,37 @@ pub struct Pilot {
     /// Keyed by channel id.
     #[serde(default)]
     pub channels: BTreeMap<String, KnownChannel>,
+    /// User-set short tag for the Strip overlay's badge, in place of the
+    /// name-derived one — mainly for telling apart two characters (possibly
+    /// on different accounts) whose names happen to start the same way.
+    /// `None` means "derive one from the name" (see `display_tag`), not
+    /// "blank"; always normalized (trimmed, capped, uppercased) on write by
+    /// `PilotRegistry::set_tag`, so any value found here is already valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+}
+
+impl Pilot {
+    /// What the Strip overlay's badge actually shows: this pilot's own tag if
+    /// it has one, otherwise the first letter of each word in its name.
+    pub fn display_tag(&self) -> String {
+        match &self.tag {
+            Some(t) if !t.is_empty() => t.clone(),
+            _ => tag_from_name(&self.name),
+        }
+    }
+}
+
+/// Derives a tag straight from a name, for a pilot with no tag of its own and
+/// for synthetic/preview alerts that have no `Pilot` record at all: the first
+/// letter of each word (any run of whitespace splits words; leading, trailing
+/// and repeated spaces are ignored), capped at `MAX_TAG_LEN` and uppercased.
+pub fn tag_from_name(name: &str) -> String {
+    cap_tag(&name.split_whitespace().filter_map(|w| w.chars().next()).collect::<String>())
+}
+
+fn cap_tag(s: &str) -> String {
+    s.trim().chars().take(MAX_TAG_LEN).collect::<String>().to_uppercase()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +95,7 @@ impl PilotRegistry {
     pub fn observe(&mut self, id: &str, name: &str, live: bool, now: Stamp) -> Observation {
         match self.pilots.get_mut(id) {
             None => {
-                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new() };
+                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None };
                 self.pilots.insert(id.to_string(), p.clone());
                 if live {
                     Observation::NewLive(p)
@@ -118,6 +152,16 @@ impl PilotRegistry {
     pub fn remove_channel(&mut self, id: &str, channel_id: &str) {
         if let Some(p) = self.pilots.get_mut(id) {
             p.channels.remove(channel_id);
+        }
+    }
+
+    /// Sets this pilot's own Strip-badge tag, normalizing it (trim, cap at
+    /// `MAX_TAG_LEN`, uppercase) first; a blank tag clears it back to "derive
+    /// one from the name" rather than storing an empty string. A no-op for an
+    /// unknown pilot id.
+    pub fn set_tag(&mut self, id: &str, tag: Option<&str>) {
+        if let Some(p) = self.pilots.get_mut(id) {
+            p.tag = tag.map(cap_tag).filter(|t| !t.is_empty());
         }
     }
 
@@ -210,6 +254,52 @@ mod tests {
     }
 
     #[test]
+    fn display_tag_falls_back_to_initials_from_the_name_when_untagged() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Psianna Archeia", true, T);
+        assert_eq!(r.get("1").unwrap().display_tag(), "PA");
+    }
+
+    #[test]
+    fn initials_collapse_runs_of_whitespace_and_ignore_leading_and_trailing_spaces() {
+        assert_eq!(tag_from_name("  Psianna   Archeia  "), "PA");
+        assert_eq!(tag_from_name("Jarna"), "J");
+        assert_eq!(tag_from_name("   "), "");
+    }
+
+    #[test]
+    fn a_pilots_own_tag_wins_over_the_derived_one() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Psianna Archeia", true, T);
+        r.set_tag("1", Some("Psi"));
+        assert_eq!(r.get("1").unwrap().display_tag(), "PSI");
+    }
+
+    #[test]
+    fn tags_are_trimmed_capped_at_five_and_uppercased() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Jarna", true, T);
+        r.set_tag("1", Some("  nightstalker  "));
+        assert_eq!(r.get("1").unwrap().tag.as_deref(), Some("NIGHT"));
+
+        // Longer than five words worth of initials is capped the same way.
+        r.observe("2", "A B C D E F G", true, T);
+        assert_eq!(r.get("2").unwrap().display_tag(), "ABCDE");
+    }
+
+    #[test]
+    fn a_blank_tag_clears_back_to_the_derived_one_instead_of_storing_empty() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Jarna", true, T);
+        r.set_tag("1", Some("J-"));
+        r.set_tag("1", Some("   "));
+        assert_eq!(r.get("1").unwrap().tag, None);
+        assert_eq!(r.get("1").unwrap().display_tag(), "J");
+        // An unknown pilot id is a no-op, not a panic.
+        r.set_tag("nobody", Some("X"));
+    }
+
+    #[test]
     fn round_trips_through_disk_and_a_missing_file_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sub").join("pilots.json");
@@ -231,5 +321,9 @@ mod tests {
         std::fs::write(&path, r#"{"pilots":{"1":{"id":"1","name":"Jarna","live":true,"firstSeen":1}}}"#).unwrap();
         let r = PilotRegistry::load(&path).unwrap();
         assert!(r.get("1").unwrap().channels.is_empty());
+        // Same for `tag`, added later still: absent entirely, not null, and
+        // still falls back to a derived one correctly.
+        assert_eq!(r.get("1").unwrap().tag, None);
+        assert_eq!(r.get("1").unwrap().display_tag(), "J");
     }
 }

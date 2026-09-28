@@ -26,6 +26,9 @@ pub struct OverlayAlert {
     pub id: u64,
     pub style: &'static str,
     pub pilot: String,
+    /// The Strip style's badge text: the pilot's own tag, or one derived from
+    /// its name (`eve_chatterer_core::pilots::Pilot::display_tag`).
+    pub tag: String,
     pub accent: String,
     pub channel: String,
     pub sender: String,
