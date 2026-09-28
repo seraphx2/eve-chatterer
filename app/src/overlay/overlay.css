@@ -81,11 +81,20 @@ b {
   transform-origin: left;
   animation: drain calc(var(--life) / 3) linear forwards;
 }
+/* Rightmost segment drains first, leftmost last - reverse of DOM/reading
+   order, since the reversed relay is what reads as "counting down toward
+   the left" at a glance (owner correction 2026-09-28: the previous version
+   drained left-to-right, matching nth-child order; this reassigns the
+   delays instead of reordering the markup, so the segments still read
+   left-to-right for anyone tabbing through/inspecting them). */
+.life i:nth-child(1) {
+  animation-delay: calc(var(--life) * 2 / 3);
+}
 .life i:nth-child(2) {
   animation-delay: calc(var(--life) / 3);
 }
 .life i:nth-child(3) {
-  animation-delay: calc(var(--life) * 2 / 3);
+  animation-delay: 0s;
 }
 
 /* Meter modes. Stepped updates the meter about 4 times a second instead of every frame. */
