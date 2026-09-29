@@ -77,8 +77,10 @@ pub enum Anchor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Delivery {
     Overlay { anchor: Anchor, style: OverlayStyle },
-    /// A native notification with a "switch to this pilot" action.
-    Toast { switch_to: String },
+    /// A native notification with a "switch to this pilot" action. `style`
+    /// is what the overlay would have been: it sets how insistent the
+    /// notification is (how long it stays), like the overlays' lifetimes.
+    Toast { switch_to: String, style: OverlayStyle },
     Sound,
 }
 
@@ -182,7 +184,7 @@ fn deliveries(
     let mode = prefs.delivery;
     let style = prefs.style.unwrap_or_else(|| cfg.styles.for_reason(reason));
     let overlay = || Delivery::Overlay { anchor: anchor_for(client, snap), style };
-    let toast = || Delivery::Toast { switch_to: pilot.to_string() };
+    let toast = || Delivery::Toast { switch_to: pilot.to_string(), style };
     let toast_ok = snap.notifications_ok;
     // A toast that Windows would hold back falls back to an overlay.
     let toast_or_overlay = || if toast_ok { toast() } else { overlay() };
@@ -271,6 +273,11 @@ mod tests {
         Delivery::Overlay { anchor, style: OverlayStyle::Beacon }
     }
 
+    /// Own-name mentions default to a Beacon, and a notification carries it.
+    fn toast(name: &str) -> Delivery {
+        Delivery::Toast { switch_to: name.into(), style: OverlayStyle::Beacon }
+    }
+
     fn only(d: &[Decision], name: &str) -> Outcome {
         d.iter().find(|d| d.pilot_name == name).unwrap().outcome.clone()
     }
@@ -319,8 +326,8 @@ mod tests {
         // it: an overlay (owned by its client, not topmost) would land behind
         // that app, so Auto delivery uses the notification area instead.
         let d = route(&alert(&["Jarna", "Psianna"]), &snap(two(), None), &RouterConfig::default());
-        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![Delivery::Toast { switch_to: "Jarna".into() }]));
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Toast { switch_to: "Psianna".into() }]));
+        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![toast("Jarna")]));
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![toast("Psianna")]));
     }
 
     #[test]
@@ -328,7 +335,7 @@ mod tests {
         let mut s = snap(two(), Some("Jarna"));
         s.idle = Duration::from_secs(10 * 60);
         let d = route(&alert(&["Jarna"]), &s, &RouterConfig::default());
-        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![Delivery::Toast { switch_to: "Jarna".into() }]));
+        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![toast("Jarna")]));
     }
 
     #[test]
@@ -340,7 +347,7 @@ mod tests {
         }
         let mut s = snap(clients, None);
         let d = route(&alert(&["Psianna"]), &s, &RouterConfig::default());
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Toast { switch_to: "Psianna".into() }]));
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![toast("Psianna")]));
 
         s.notifications_ok = false;
         let d = route(&alert(&["Psianna"]), &s, &RouterConfig::default());
@@ -412,7 +419,7 @@ mod tests {
         let d = route(&a, &s, &RouterConfig::default());
         assert_eq!(
             only(&d, "Jarna"),
-            Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L)), Delivery::Toast { switch_to: "Jarna".into() }, Delivery::Sound])
+            Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L)), toast("Jarna"), Delivery::Sound])
         );
         assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Sound]));
     }

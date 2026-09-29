@@ -115,7 +115,7 @@ fn delivery(d: &Delivery) -> String {
                 Anchor::Unknown => format!("{style} overlay (no known monitor)"),
             }
         }
-        Delivery::Toast { switch_to } => format!("toast, action: switch to {switch_to}"),
+        Delivery::Toast { switch_to, .. } => format!("toast, action: switch to {switch_to}"),
         Delivery::Sound => "sound".into(),
     }
 }

@@ -2,6 +2,7 @@
 //! overlays over the game. The always-on part is the Rust core (see
 //! `runner`); WebView2 windows (overlays, settings) exist only while needed.
 
+mod badge;
 mod clientmoves;
 mod diag;
 mod overlay;
@@ -9,6 +10,7 @@ mod reposition;
 mod runner;
 mod state;
 mod testalerts;
+mod toast;
 
 use eve_chatterer_core::settings::Settings;
 use state::{AppState, SettingsData, Status};
@@ -177,7 +179,6 @@ pub fn run() {
     let app = tauri::Builder::default()
         // A second launch just brings up the settings of the running instance.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| open_settings(app)))
-        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -231,10 +232,14 @@ pub fn run() {
                 eprintln!("could not register the reposition hotkey (Ctrl+Alt+O): {e}");
             }
 
+            toast::init(app.handle());
             clientmoves::start(app.handle().clone());
             runner::spawn(app.handle().clone());
             if std::env::args().any(|a| a == "--selftest") {
                 testalerts::selftest(app.handle());
+            }
+            if std::env::args().any(|a| a == "--toasttest") {
+                testalerts::toasttest(app.handle());
             }
             if std::env::args().any(|a| a == "--soak") {
                 testalerts::soak(app.handle());

@@ -18,7 +18,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_notification::NotificationExt;
+use crate::toast::{self, ChatToast};
 
 const SAMPLE_EVERY: Duration = Duration::from_millis(250);
 const TICK_EVERY: Duration = Duration::from_millis(500);
@@ -71,7 +71,7 @@ pub fn lifetime_ms(s: OverlayStyle) -> u32 {
 }
 
 /// Plain-language reason and the tone (color) it takes.
-fn reason_text(r: &Reason) -> (String, &'static str) {
+pub fn reason_text(r: &Reason) -> (String, &'static str) {
     match r {
         Reason::OwnName => ("Mentioned you".to_string(), "mention"),
         Reason::Keyword(k) => (format!("Keyword: {k}"), "keyword"),
@@ -128,10 +128,9 @@ fn placement(app: &AppHandle, anchor: Anchor, snap: &Snapshot) -> Option<(Rect, 
     }
 }
 
-fn notify(app: &AppHandle, title: &str, body: &str) {
-    if let Err(e) = app.notification().builder().title(title).body(body).show() {
-        eprintln!("notification failed: {e}");
-    }
+/// An app-level Windows notification (not a chat alert).
+fn notify(_app: &AppHandle, title: &str, body: &str) {
+    toast::plain(title, body);
 }
 
 struct Runner {
@@ -314,12 +313,21 @@ impl Runner {
                             );
                             state.alerts_shown.fetch_add(1, Ordering::Relaxed);
                         }
-                        Delivery::Toast { switch_to } => {
-                            notify(
-                                &self.app,
-                                &format!("{} in {}", alert.line.sender, alert.channel_name),
-                                &format!("{}\n(for {switch_to})", alert.line.text),
-                            );
+                        Delivery::Toast { switch_to, style } => {
+                            let (reason, tone) = reason_text(&d.reason);
+                            toast::chat(ChatToast {
+                                key: toast::key_for(switch_to, &alert.channel_name, matches!(d.reason, Reason::OwnName)),
+                                pilot: switch_to.clone(),
+                                tag: tag_for(&self.app, d.pilot_id.as_deref(), switch_to),
+                                accent: accent_for(switch_to),
+                                tone,
+                                sender: alert.line.sender.clone(),
+                                channel: alert.channel_name.clone(),
+                                text: alert.line.text.clone(),
+                                reason,
+                                style: style_name(*style),
+                                mention: matches!(d.reason, Reason::OwnName),
+                            });
                             state.alerts_shown.fetch_add(1, Ordering::Relaxed);
                         }
                         Delivery::Sound => {} // sound comes with the audio milestone
@@ -328,6 +336,8 @@ impl Runner {
             }
             Outcome::Limited(OverCap::Fold) => {
                 state.overlays.fold(&self.app, Fold { pilot: d.pilot_name.clone(), channel: alert.channel_name.clone() });
+                // And the notification, if the recent alerts went there.
+                toast::fold(&toast::key_for(&d.pilot_name, &alert.channel_name, matches!(d.reason, Reason::OwnName)));
             }
             Outcome::Limited(OverCap::Drop) | Outcome::Suppressed(_) => {}
         }

@@ -79,6 +79,8 @@ Overlays for in-game events, native Windows notifications for app-level events (
 | User idle for N minutes | Toast (persists in Action Center), optional sound |
 | Toast cannot display (quiet time, DND) | Fall back to overlay; sound is a separate option |
 
+Chat toasts (owner decisions 2026-09-29; `app/src-tauri/src/toast.rs`, mockup `docs/design/windows-notification.html`) are native Windows notifications sent straight through WinRT, not a custom popup: only native ones honor Do Not Disturb, Focus and full-screen apps and keep Action Center history (FINDINGS #11, #12). They carry our look where Windows allows: a rendered badge image (`badge.rs`: the tag on the overlays' steel plate, pilot-accent edge, reason-colored notch), "Sender in Channel", the message, a "Pilot · reason" line, and Switch to (brings that client forward) / Dismiss. How long one stays follows the overlay style's lifetime: Strip short (~7 s), Panel long (~25 s), Beacon sticky until clicked; a mention of the pilot's name is always sticky, whatever the style. Overlays have no sticky equivalent because they are click-through. Repeat lines from the same pilot and channel replace one notification with a running count; mentions have their own slot so chatter never replaces (and un-sticks) one; rate-capped lines update the count in place (replacing it pulled it off screen). The app registers its own identity (HKCU `AppUserModelId`) at startup; all app notifications use it.
+
 Configurable per rule and pilot: overlay / toast / both / sound only. New overlays appear on the virtual desktop the user is currently on. Toasts and overlays are both coalesced (one per channel or pilot, updated in place).
 
 ## Settings screen (mockup finalized 2026-09-27, ready to implement)

@@ -105,6 +105,54 @@ pub fn soak(app: &AppHandle) {
     });
 }
 
+/// `--toasttest`: sends Windows notifications through the real path, for
+/// checking their look and behavior without any chat or a second client.
+/// One of each length (mention: sticky, keyword: long, always: short), then
+/// ordinary chatter in the mention's channel (must not replace the sticky
+/// mention), then a second mention (replaces the first, stays sticky, "2
+/// lines"). The app keeps running afterwards so "Switch to" can be clicked.
+pub fn toasttest(app: &AppHandle) {
+    use crate::toast::{self, ChatToast};
+    use eve_chatterer_core::rules::Reason;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let pilot = pilot_name(&app);
+        let pilot_id = app.state::<AppState>().status.lock().unwrap().pilots.iter().find(|p| p.name == pilot).map(|p| p.id.clone());
+        let tag = tag_for(&app, pilot_id.as_deref(), &pilot);
+        let send = |channel: &str, sender: &str, text: &str, reason: &Reason, style: OverlayStyle| {
+            let (why, tone) = crate::runner::reason_text(reason);
+            let mention = matches!(reason, Reason::OwnName);
+            println!("[toasttest] {channel}: {sender}: {text}");
+            toast::chat(ChatToast {
+                key: toast::key_for(&pilot, channel, mention),
+                pilot: pilot.clone(),
+                tag: tag.clone(),
+                accent: accent_for(&pilot),
+                tone,
+                sender: sender.into(),
+                channel: channel.into(),
+                text: text.into(),
+                reason: why,
+                style: style_name(style),
+                mention,
+            });
+        };
+        let first = pilot.split_whitespace().next().unwrap_or(&pilot).to_string();
+        let pause = || std::thread::sleep(Duration::from_secs(3));
+        std::thread::sleep(Duration::from_secs(4));
+        send("Local", "Rilakss", &format!("{first}, are you on for the fleet tonight?"), &Reason::OwnName, OverlayStyle::Beacon);
+        pause();
+        send("Fleet", "FC Voss", "Align to the gate. Primary is the Loki.", &Reason::Keyword("primary".into()), OverlayStyle::Panel);
+        pause();
+        send("Corp", "Jack Browning", "Some of these BPs have a much higher research cost than I thought.", &Reason::AlwaysChannel("Corp".into()), OverlayStyle::Strip);
+        pause();
+        send("Local", "Bob", "selling in Jita 4-4, @all", &Reason::Keyword("@all".into()), OverlayStyle::Panel);
+        pause();
+        send("Local", "Rilakss", &format!("{first}? x up in fleet chat"), &Reason::OwnName, OverlayStyle::Beacon);
+        println!("[toasttest] done: the Local mention should still be on screen, sticky, showing 2 lines");
+    });
+}
+
 /// `kind` is "panel", "strip", "beacon", "burst" or "all".
 pub fn send(app: &AppHandle, kind: &str) {
     match kind {
