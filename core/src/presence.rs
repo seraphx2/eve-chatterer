@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn on_screen_needs_all_three_checks() {
-        let mut c = client("Jarna", 1);
+        let mut c = client("Holden", 1);
         assert!(c.on_screen());
         c.minimized = true;
         assert!(!c.on_screen());
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn covers_monitor_distinguishes_borderless_from_windowed() {
-        let mut c = client("Jarna", 1);
+        let mut c = client("Holden", 1);
         assert!(c.covers_monitor());
         c.rect = Some(Rect { left: 300, top: 200, right: 1500, bottom: 900 });
         assert!(!c.covers_monitor());
@@ -266,58 +266,58 @@ mod tests {
 
     #[test]
     fn focus_follows_eve_windows_and_drops_for_other_apps() {
-        let clients = [client("Jarna", 10), client("Psianna", 20)];
+        let clients = [client("Holden", 10), client("Naomi", 20)];
         let mut t = FocusTracker::new(Duration::from_millis(1500));
         let t0 = Instant::now();
-        assert_eq!(t.observe(Some(&fg(10, "trinityWindow")), &clients, t0).as_deref(), Some("Jarna"));
-        assert_eq!(t.observe(Some(&fg(20, "trinityWindow")), &clients, t0).as_deref(), Some("Psianna"));
+        assert_eq!(t.observe(Some(&fg(10, "trinityWindow")), &clients, t0).as_deref(), Some("Holden"));
+        assert_eq!(t.observe(Some(&fg(20, "trinityWindow")), &clients, t0).as_deref(), Some("Naomi"));
         assert_eq!(t.observe(Some(&fg(99, "MozillaWindowClass")), &clients, t0), None);
     }
 
     #[test]
     fn the_alt_tab_switcher_does_not_steal_focus_until_the_grace_runs_out() {
-        let clients = [client("Jarna", 10)];
+        let clients = [client("Holden", 10)];
         let mut t = FocusTracker::new(Duration::from_millis(1500));
         let t0 = Instant::now();
         t.observe(Some(&fg(10, "trinityWindow")), &clients, t0);
         let switcher = fg(77, "XamlExplorerHostIslandWindow");
-        assert_eq!(t.observe(Some(&switcher), &clients, t0 + Duration::from_millis(300)).as_deref(), Some("Jarna"));
-        assert_eq!(t.observe(Some(&switcher), &clients, t0 + Duration::from_millis(1000)).as_deref(), Some("Jarna"));
+        assert_eq!(t.observe(Some(&switcher), &clients, t0 + Duration::from_millis(300)).as_deref(), Some("Holden"));
+        assert_eq!(t.observe(Some(&switcher), &clients, t0 + Duration::from_millis(1000)).as_deref(), Some("Holden"));
         // Held open longer than the grace: the user has effectively left.
         assert_eq!(t.observe(Some(&switcher), &clients, t0 + Duration::from_millis(2000)), None);
     }
 
     #[test]
     fn landing_on_eve_after_the_switcher_takes_focus_immediately() {
-        let clients = [client("Jarna", 10), client("Psianna", 20)];
+        let clients = [client("Holden", 10), client("Naomi", 20)];
         let mut t = FocusTracker::new(Duration::from_millis(1500));
         let t0 = Instant::now();
         t.observe(Some(&fg(10, "trinityWindow")), &clients, t0);
         t.observe(Some(&fg(77, "XamlExplorerHostIslandWindow")), &clients, t0 + Duration::from_millis(200));
-        assert_eq!(t.observe(Some(&fg(20, "trinityWindow")), &clients, t0 + Duration::from_millis(600)).as_deref(), Some("Psianna"));
+        assert_eq!(t.observe(Some(&fg(20, "trinityWindow")), &clients, t0 + Duration::from_millis(600)).as_deref(), Some("Naomi"));
     }
 
     #[test]
     fn a_null_foreground_is_treated_as_transient() {
-        let clients = [client("Jarna", 10)];
+        let clients = [client("Holden", 10)];
         let mut t = FocusTracker::new(Duration::from_millis(1500));
         let t0 = Instant::now();
         t.observe(Some(&fg(10, "trinityWindow")), &clients, t0);
-        assert_eq!(t.observe(None, &clients, t0 + Duration::from_millis(100)).as_deref(), Some("Jarna"));
+        assert_eq!(t.observe(None, &clients, t0 + Duration::from_millis(100)).as_deref(), Some("Holden"));
     }
 
     #[test]
     fn snapshot_lookups_ignore_case() {
         let s = Snapshot {
-            clients: vec![client("Psianna Archeia", 20)],
-            focused: Some("Psianna Archeia".into()),
+            clients: vec![client("Naomi Nagata", 20)],
+            focused: Some("Naomi Nagata".into()),
             foreground: None,
             idle: Duration::ZERO,
             notifications_ok: true,
         };
-        assert!(s.client("psianna archeia").is_some());
-        assert!(s.is_focused("PSIANNA ARCHEIA"));
-        assert!(!s.is_focused("Jarna"));
+        assert!(s.client("naomi nagata").is_some());
+        assert!(s.is_focused("NAOMI NAGATA"));
+        assert!(!s.is_focused("Holden"));
         assert!(s.any_on_screen());
     }
 }

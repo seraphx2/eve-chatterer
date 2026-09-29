@@ -62,14 +62,14 @@ fn main() {
         r#"<toast launch="action=open" activationType="foreground">
   <visual>
     <binding template="ToastGeneric">
-      <text>Rilakss in Local</text>
-      <text>Jarna, are you on for the fleet tonight? We are forming up in Jita at 20:00.</text>
-      <text placement="attribution">Jarna · Mentioned you</text>
+      <text>Amos Burton in Local</text>
+      <text>Holden, are you on for the fleet tonight? We are forming up in Jita at 20:00.</text>
+      <text placement="attribution">Holden · Mentioned you</text>
       <image placement="appLogoOverride" src="file:///{}"/>
     </binding>
   </visual>
   <actions>
-    <action content="Switch to Jarna" arguments="switch=Jarna" activationType="foreground"/>
+    <action content="Switch to Holden" arguments="switch=Holden" activationType="foreground"/>
     <action content="Dismiss" arguments="dismiss" activationType="system"/>
   </actions>
 </toast>"#,

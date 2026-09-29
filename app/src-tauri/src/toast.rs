@@ -369,8 +369,8 @@ mod tests {
 
     fn sample() -> ChatToast {
         ChatToast {
-            key: key_for("Psianna Archeia", "Local", false),
-            pilot: "Psianna Archeia".into(),
+            key: key_for("Naomi Nagata", "Local", false),
+            pilot: "Naomi Nagata".into(),
             tag: "PA".into(),
             accent: "#a58af0".into(),
             tone: "mention",
@@ -408,24 +408,24 @@ mod tests {
         // Bound, so a fold can update it in place.
         assert!(x.contains(r#"<text placement="attribution">{attribution}</text>"#), "{x}");
         assert!(x.contains("file:///C:/cache/badges/PA.png"), "{x}");
-        assert!(x.contains(r#"content="Switch to Psianna""#), "{x}");
-        assert!(x.contains(r#"arguments="switch=Psianna Archeia""#), "{x}");
+        assert!(x.contains(r#"content="Switch to Naomi""#), "{x}");
+        assert!(x.contains(r#"arguments="switch=Naomi Nagata""#), "{x}");
     }
 
     #[test]
     fn a_folded_notification_shows_its_line_count() {
-        assert_eq!(attribution(&sample(), 1), "Psianna Archeia · Mentioned you");
-        assert_eq!(attribution(&sample(), 3), "Psianna Archeia · Mentioned you · 3 lines");
+        assert_eq!(attribution(&sample(), 1), "Naomi Nagata · Mentioned you");
+        assert_eq!(attribution(&sample(), 3), "Naomi Nagata · Mentioned you · 3 lines");
     }
 
     #[test]
     fn repeats_group_by_pilot_and_channel_regardless_of_case() {
-        assert_eq!(key_for("Jarna", "Local", false), key_for("jarna", "LOCAL", false));
-        assert_ne!(key_for("Jarna", "Local", false), key_for("Jarna", "Corp", false));
+        assert_eq!(key_for("Holden", "Local", false), key_for("holden", "LOCAL", false));
+        assert_ne!(key_for("Holden", "Local", false), key_for("Holden", "Corp", false));
     }
 
     #[test]
     fn a_mention_has_its_own_slot_so_chatter_cannot_replace_it() {
-        assert_ne!(key_for("Jarna", "Local", true), key_for("Jarna", "Local", false));
+        assert_ne!(key_for("Holden", "Local", true), key_for("Holden", "Local", false));
     }
 }

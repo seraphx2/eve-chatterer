@@ -9,9 +9,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 const SAMPLES: [(&str, &str); 6] = [
-    ("Rilakss", "Jarna, are you on for the fleet tonight? We are forming up in Jita at 20:00."),
+    ("Amos Burton", "Holden, are you on for the fleet tonight? We are forming up in Jita at 20:00."),
     ("Mr Nodes", "HyperNet offer: Zirnitra 4/8 cheap nodes"),
-    ("Ceryph", "Anyone up for a mining op?"),
+    ("Alex", "Anyone up for a mining op?"),
     ("FC Voss", "Align to the gate. Primary is the Loki, broadcast for reps."),
     ("Bob", "selling in Jita 4-4"),
     ("Teramalk", ".Zirnitra --> 11mil"),
@@ -47,7 +47,7 @@ fn alert(app: &AppHandle, pilot: &str, style: OverlayStyle, i: usize) -> Overlay
 fn pilot_name(app: &AppHandle) -> String {
     let state = app.state::<AppState>();
     let st = state.status.lock().unwrap();
-    st.pilots.iter().find(|p| p.live).or_else(|| st.pilots.first()).map(|p| p.name.clone()).unwrap_or_else(|| "Jarna".to_string())
+    st.pilots.iter().find(|p| p.live).or_else(|| st.pilots.first()).map(|p| p.name.clone()).unwrap_or_else(|| "Holden".to_string())
 }
 
 fn on_every_monitor(app: &AppHandle, style: OverlayStyle, i: usize) {
@@ -140,7 +140,7 @@ pub fn toasttest(app: &AppHandle) {
         let first = pilot.split_whitespace().next().unwrap_or(&pilot).to_string();
         let pause = || std::thread::sleep(Duration::from_secs(3));
         std::thread::sleep(Duration::from_secs(4));
-        send("Local", "Rilakss", &format!("{first}, are you on for the fleet tonight?"), &Reason::OwnName, OverlayStyle::Beacon);
+        send("Local", "Amos Burton", &format!("{first}, are you on for the fleet tonight?"), &Reason::OwnName, OverlayStyle::Beacon);
         pause();
         send("Fleet", "FC Voss", "Align to the gate. Primary is the Loki.", &Reason::Keyword("primary".into()), OverlayStyle::Panel);
         pause();
@@ -148,7 +148,7 @@ pub fn toasttest(app: &AppHandle) {
         pause();
         send("Local", "Bob", "selling in Jita 4-4, @all", &Reason::Keyword("@all".into()), OverlayStyle::Panel);
         pause();
-        send("Local", "Rilakss", &format!("{first}? x up in fleet chat"), &Reason::OwnName, OverlayStyle::Beacon);
+        send("Local", "Amos Burton", &format!("{first}? x up in fleet chat"), &Reason::OwnName, OverlayStyle::Beacon);
         println!("[toasttest] done: the Local mention should still be on screen, sticky, showing 2 lines");
     });
 }

@@ -506,8 +506,8 @@ mod tests {
     /// (only a mention alerts).
     fn sender_verdict(s: &Settings, pilot: &str, sender: &str) -> &'static str {
         let r = s.resolve(Some(pilot), ChannelKind::Local, "local");
-        let line = |text| r.rules.evaluate(&LineCtx { pilot_name: "Jarna", channel_name: "Local", sender, text });
-        match (line("nothing special"), line("hi Jarna")) {
+        let line = |text| r.rules.evaluate(&LineCtx { pilot_name: "Holden", channel_name: "Local", sender, text });
+        match (line("nothing special"), line("hi Holden")) {
             (Some(Reason::AlwaysSender(_)), _) => "always",
             (None, None) => "ignored",
             (None, Some(Reason::OwnName)) => "normal",
@@ -525,7 +525,7 @@ mod tests {
 
     /// Which keyword (if any) fires for this text in the resolved behavior.
     fn hit(r: &Resolved, text: &str) -> Option<String> {
-        match r.rules.evaluate(&LineCtx { pilot_name: "Jarna", channel_name: "X", sender: "Bob", text }) {
+        match r.rules.evaluate(&LineCtx { pilot_name: "Holden", channel_name: "X", sender: "Bob", text }) {
             Some(Reason::Keyword(k)) => Some(k),
             _ => None,
         }
@@ -586,7 +586,7 @@ mod tests {
         s.kinds.insert(ChannelKind::Local, Layer { mode: Some(Mode::Nothing), ..Layer::default() });
         let r = s.resolve(None, ChannelKind::Local, "local");
         assert_eq!(r.mode, Mode::Nothing);
-        let ctx = LineCtx { pilot_name: "Jarna", channel_name: "Local", sender: "Bob", text: "selling in jita" };
+        let ctx = LineCtx { pilot_name: "Holden", channel_name: "Local", sender: "Bob", text: "selling in jita" };
         assert_eq!(r.rules.evaluate_mode(&ctx, r.mode), None, "even_when_muted:false makes it respect the muted channel");
     }
 
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn json_round_trips_and_accepts_partial_files() {
         let mut s = Settings::with_defaults();
-        s.pilots.entry("1216741999".into()).or_default().base.sound = Some(true);
+        s.pilots.entry("2112000001".into()).or_default().base.sound = Some(true);
         let text = serde_json::to_string_pretty(&s).unwrap();
         assert!(!text.contains("null"), "unset fields are omitted: {text}");
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), s);

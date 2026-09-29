@@ -152,7 +152,7 @@ mod tests {
     }
 
     fn decision(outcome: Outcome, caps: Vec<(LayerKey, RateCap)>) -> Decision {
-        Decision { pilot_name: "Jarna".into(), pilot_id: Some("1".into()), reason: Reason::OwnName, outcome, caps }
+        Decision { pilot_name: "Holden".into(), pilot_id: Some("1".into()), reason: Reason::OwnName, outcome, caps }
     }
 
     #[test]

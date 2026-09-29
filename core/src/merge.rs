@@ -122,9 +122,9 @@ mod tests {
     fn the_same_line_from_two_characters_becomes_one_with_both_listeners() {
         let mut m = Merger::new(HOLD, 2);
         let t0 = Instant::now();
-        assert!(m.push(&ev("1", "Jarna", 100, "Bob", "buying"), t0, true).is_none());
-        // Psianna's copy carries a stamp one second later and arrives on the next poll.
-        assert!(m.push(&ev("2", "Psianna", 101, "Bob", "buying"), t0 + Duration::from_millis(500), true).is_none());
+        assert!(m.push(&ev("1", "Holden", 100, "Bob", "buying"), t0, true).is_none());
+        // Naomi's copy carries a stamp one second later and arrives on the next poll.
+        assert!(m.push(&ev("2", "Naomi", 101, "Bob", "buying"), t0 + Duration::from_millis(500), true).is_none());
         assert!(m.flush(t0 + Duration::from_millis(600)).is_empty(), "still holding");
         let out = m.flush(t0 + HOLD);
         assert_eq!(out.len(), 1);
@@ -136,7 +136,7 @@ mod tests {
     fn a_lone_line_in_a_shared_channel_is_emitted_after_the_hold() {
         let mut m = Merger::new(HOLD, 2);
         let t0 = Instant::now();
-        m.push(&ev("1", "Jarna", 100, "Bob", "hi"), t0, true);
+        m.push(&ev("1", "Holden", 100, "Bob", "hi"), t0, true);
         let out = m.flush(t0 + HOLD);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].seen_by.len(), 1);
@@ -145,16 +145,16 @@ mod tests {
     #[test]
     fn unshared_channels_are_not_delayed() {
         let mut m = Merger::new(HOLD, 2);
-        assert!(m.push(&ev("1", "Jarna", 100, "Bob", "hi"), Instant::now(), false).is_some());
+        assert!(m.push(&ev("1", "Holden", 100, "Bob", "hi"), Instant::now(), false).is_some());
     }
 
     #[test]
     fn a_late_second_copy_after_emission_is_dropped_not_re_emitted() {
         let mut m = Merger::new(HOLD, 2);
         let t0 = Instant::now();
-        m.push(&ev("1", "Jarna", 100, "Bob", "hi"), t0, true);
+        m.push(&ev("1", "Holden", 100, "Bob", "hi"), t0, true);
         assert_eq!(m.flush(t0 + HOLD).len(), 1);
-        assert!(m.push(&ev("2", "Psianna", 101, "Bob", "hi"), t0 + Duration::from_secs(2), true).is_none());
+        assert!(m.push(&ev("2", "Naomi", 101, "Bob", "hi"), t0 + Duration::from_secs(2), true).is_none());
         assert!(m.flush(t0 + Duration::from_secs(3)).is_empty());
     }
 
@@ -162,8 +162,8 @@ mod tests {
     fn the_same_listener_repeating_itself_is_two_lines() {
         let mut m = Merger::new(HOLD, 2);
         let t0 = Instant::now();
-        m.push(&ev("1", "Jarna", 100, "Bob", "spam"), t0, true);
-        m.push(&ev("1", "Jarna", 101, "Bob", "spam"), t0, true);
+        m.push(&ev("1", "Holden", 100, "Bob", "spam"), t0, true);
+        m.push(&ev("1", "Holden", 101, "Bob", "spam"), t0, true);
         assert_eq!(m.flush(t0 + HOLD).len(), 2);
     }
 
@@ -171,9 +171,9 @@ mod tests {
     fn different_text_or_far_apart_stamps_do_not_merge() {
         let mut m = Merger::new(HOLD, 2);
         let t0 = Instant::now();
-        m.push(&ev("1", "Jarna", 100, "Bob", "a"), t0, true);
-        m.push(&ev("2", "Psianna", 100, "Bob", "b"), t0, true);
-        m.push(&ev("2", "Psianna", 110, "Bob", "a"), t0, true);
+        m.push(&ev("1", "Holden", 100, "Bob", "a"), t0, true);
+        m.push(&ev("2", "Naomi", 100, "Bob", "b"), t0, true);
+        m.push(&ev("2", "Naomi", 110, "Bob", "a"), t0, true);
         assert_eq!(m.flush(t0 + HOLD).len(), 3);
     }
 }

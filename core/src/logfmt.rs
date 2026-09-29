@@ -169,19 +169,19 @@ mod tests {
 
     #[test]
     fn parses_a_real_shaped_header() {
-        let text = format!("\u{feff}{}", header("local", "Local", "Jarna"));
+        let text = format!("\u{feff}{}", header("local", "Local", "Holden"));
         let h = parse_header(&text).unwrap();
         assert_eq!(h.channel_id, "local");
         assert_eq!(h.channel_name, "Local");
-        assert_eq!(h.listener, "Jarna");
+        assert_eq!(h.listener, "Holden");
         assert_eq!(h.session_started, Stamp::parse_log("2026.09.26 21:03:56"));
     }
 
     #[test]
     fn header_falls_back_to_position_when_keys_are_localized() {
-        let text = "\r\n---\r\n  Kanal-ID:   local\r\n  Kanalname:  Lokal\r\n  Zuhörer:    Jarna\r\n  Sitzung gestartet: 2026.09.26 21:03:56\r\n---\r\n";
+        let text = "\r\n---\r\n  Kanal-ID:   local\r\n  Kanalname:  Lokal\r\n  Zuhörer:    Holden\r\n  Sitzung gestartet: 2026.09.26 21:03:56\r\n---\r\n";
         let h = parse_header(text).unwrap();
-        assert_eq!((h.channel_name.as_str(), h.listener.as_str()), ("Lokal", "Jarna"));
+        assert_eq!((h.channel_name.as_str(), h.listener.as_str()), ("Lokal", "Holden"));
         assert!(h.session_started.is_some());
     }
 
@@ -193,8 +193,8 @@ mod tests {
 
     #[test]
     fn parses_chat_lines_with_bom_and_odd_text() {
-        let l = parse_line(line("2026.09.27 01:37:31", "Rilakss", "Предложение гиперсети: Zirnitra*").trim_end()).unwrap();
-        assert_eq!(l.sender, "Rilakss");
+        let l = parse_line(line("2026.09.27 01:37:31", "Amos Burton", "Предложение гиперсети: Zirnitra*").trim_end()).unwrap();
+        assert_eq!(l.sender, "Amos Burton");
         assert_eq!(l.text, "Предложение гиперсети: Zirnitra*");
         // A '>' or ']' inside the message must not confuse the split.
         let l = parse_line("[ 2026.09.27 01:37:31 ] Bob > a > b ] c").unwrap();
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn reads_only_complete_lines_and_resumes() {
-        let mut bytes = file_bytes(&(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "one")));
+        let mut bytes = file_bytes(&(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "one")));
         let mut c = Cursor::new(bytes.clone());
         let first = read_complete_lines(&mut c, 0).unwrap();
         assert_eq!(first.lines.iter().filter(|l| parse_line(l).is_some()).count(), 1);
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn truncation_restarts_from_the_top() {
-        let bytes = file_bytes(&(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "one")));
+        let bytes = file_bytes(&(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "one")));
         let mut c = Cursor::new(bytes);
         let r = read_complete_lines(&mut c, 99_999).unwrap();
         assert!(r.truncated);
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn last_line_boundary_skips_history() {
-        let bytes = file_bytes(&(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "one") + &line("2026.09.27 01:00:01", "B", "two")));
+        let bytes = file_bytes(&(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "one") + &line("2026.09.27 01:00:01", "B", "two")));
         let len = bytes.len() as u64;
         let mut c = Cursor::new(bytes);
         assert_eq!(last_line_boundary(&mut c).unwrap(), len);
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn reads_the_header_from_a_file() {
-        let mut c = Cursor::new(file_bytes(&header("local", "Local", "Jarna")));
-        assert_eq!(read_header(&mut c).unwrap().unwrap().listener, "Jarna");
+        let mut c = Cursor::new(file_bytes(&header("local", "Local", "Holden")));
+        assert_eq!(read_header(&mut c).unwrap().unwrap().listener, "Holden");
     }
 }

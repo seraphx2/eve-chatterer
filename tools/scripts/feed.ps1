@@ -12,7 +12,7 @@ function Header($listener, $now) {
 }
 New-Item -ItemType Directory -Force $Dir | Out-Null
 $now = [DateTime]::UtcNow
-$chars = @(@{ Name = 'Jarna'; Id = '111' }, @{ Name = 'Psianna Archeia'; Id = '222' })
+$chars = @(@{ Name = 'Holden'; Id = '111' }, @{ Name = 'Naomi Nagata'; Id = '222' })
 $streams = @()
 foreach ($c in $chars) {
   $path = Join-Path $Dir ("Local_{0}_{1}.txt" -f $now.ToString('yyyyMMdd_HHmmss'), $c.Id)

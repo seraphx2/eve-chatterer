@@ -1,6 +1,6 @@
 # Findings: measured facts and how to re-check them
 
-Everything here was measured on the project owner's machine (Windows 11, two 1920x1080 monitors, Documents redirected into OneDrive, two clients: Jarna and Psianna Archeia) unless stated. Probes live in `src/bin/`; shared helpers in `src/winutil.rs`. Logs: `probe-log.txt`, `focus-log.txt`, `overlay-log.txt` (gitignored).
+Everything here was measured on the project owner's machine (Windows 11, two 1920x1080 monitors, Documents redirected into OneDrive, two clients: Holden and Naomi Nagata) unless stated. Probes live in `src/bin/`; shared helpers in `src/winutil.rs`. Logs: `probe-log.txt`, `focus-log.txt`, `overlay-log.txt` (gitignored).
 
 ## 1. Directory events are unreliable for live log growth; polling works
 
@@ -53,7 +53,7 @@ Cost scales with polled (character, channel) pairs, about 0.05 ms/s each, not wi
 
 - A topmost, click-through (`WS_EX_TRANSPARENT`), non-activating (`WS_EX_NOACTIVATE`) layered window appeared over EVE clients in **Fixed Window** and over a **Fullscreen** client on both monitors, without stealing focus (`focus kept: YES` in every trial), minimizing anything, or blocking mouse input (owner confirmed camera control through it).
 - Overlays are monitor-anchored (screen coordinates), not attached to the game window. An overlay still appeared on the monitor of a minimized Fullscreen client.
-- `SHQueryUserNotificationState` is `BUSY` while an EVE client is focused in most trials but not all (Fixed Window Jarna gave `ACCEPTS_NOTIFICATIONS` once, `BUSY` earlier). It is not a reliable indicator of display mode; use it only as a hint about whether a system toast would show.
+- `SHQueryUserNotificationState` is `BUSY` while an EVE client is focused in most trials but not all (Fixed Window Holden gave `ACCEPTS_NOTIFICATIONS` once, `BUSY` earlier). It is not a reliable indicator of display mode; use it only as a hint about whether a system toast would show.
 - EVE display modes: Windowed (ordinary), Fixed Window (borderless-like, stays up unfocused, spans monitors), Fullscreen (exclusive; hides when unfocused). It looks like Windows still composites Fullscreen (banner drew over it), which may not hold on every GPU/driver.
 
 ## 6. Reference footprint: dev-prompt (Tauri, tray + hotkey overlay)
@@ -62,9 +62,9 @@ Cost scales with polled (character, channel) pairs, about 0.05 ms/s each, not wi
 
 ## 7. End-to-end routing check (headless core + presence + router)
 
-Setup: `tools/scripts/feed.ps1` writes synthetic logs (never the real folder) for two characters named like the owner's live clients ("Jarna", "Psianna Archeia") in one shared channel, appending a line every 4 s with the second copy stamped one second later; `chatter --dir <temp> --keyword chatterer-test` reads them while presence samples the real windows. 150 s run, 32 alerts, the owner moving between focus states by hand.
+Setup: `tools/scripts/feed.ps1` writes synthetic logs (never the real folder) for two characters named like the owner's live clients ("Holden", "Naomi Nagata") in one shared channel, appending a line every 4 s with the second copy stamped one second later; `chatter --dir <temp> --keyword chatterer-test` reads them while presence samples the real windows. 150 s run, 32 alerts, the owner moving between focus states by hand.
 
-Result: all 32 decisions matched the presence state at that moment. Focused pilot suppressed and the other one got an overlay on its own monitor (Jarna left, Psianna right, from real window geometry); browser focused gave overlays for both; both clients on another virtual desktop gave toasts for both. Each line produced one alert (32 lines, 32 alerts) carrying both characters in `seen_by`. Alerts printed within about 1 s of the write (includes the 750 ms merge hold).
+Result: all 32 decisions matched the presence state at that moment. Focused pilot suppressed and the other one got an overlay on its own monitor (Holden left, Naomi right, from real window geometry); browser focused gave overlays for both; both clients on another virtual desktop gave toasts for both. Each line produced one alert (32 lines, 32 alerts) carrying both characters in `seen_by`. Alerts printed within about 1 s of the write (includes the 750 ms merge hold).
 
 Not exercised: alt-tab held longer than the 1.5 s grace with an alert firing during it, and the 5-minute away path (both unit-tested only). Fullscreen (minimize-on-unfocus) client not run through this yet.
 
@@ -141,7 +141,7 @@ Second run, same probe with WinRT `Windows.UI.Shell.FocusSessionManager` added (
 
 Sent straight through WinRT (`ToastNotificationManager::CreateToastNotifierWithId`), not the Tauri plugin, from a plain `target\debug` exe, after registering an app identity under `HKCU\Software\Classes\AppUserModelId\<id>` (`DisplayName`, `IconUri`):
 - The `appLogoOverride` image (a local PNG via `file:///`) showed; the owner confirmed. So did the `placement="attribution"` line.
-- Clicking a `foreground` button raised `Activated` in the running process about 1 s after showing, with the button's `arguments` (`switch=Jarna`).
+- Clicking a `foreground` button raised `Activated` in the running process about 1 s after showing, with the button's `arguments` (`switch=Holden`).
 - Unclicked, it went to the notification center after ~6 s (`Dismissed: TimedOut`).
 - `Setting()` failed with "Element not found" on the first run just after registering the identity, and read `Enabled` on the next run.
 
@@ -154,7 +154,7 @@ Limit: `Activated` reaches only the process that sent the notification while it 
 - "Directory events are fine" and "the 0 ms LAG lines are a race": wrong; they were the poller triggering the notification.
 - "Filename stamp is local time": wrong, it is UTC.
 - "OneDrive is the cause": wrong, plain NTFS behaves the same (OneDrive is slightly better).
-- "Psianna is in exclusive Fullscreen" (from minimize behavior): wrong; the owner had switched her to Windowed to test minimizing.
+- "Naomi is in exclusive Fullscreen" (from minimize behavior): wrong; the owner had switched her to Windowed to test minimizing.
 - "Her Local file had no writes while the probe ran": wrong; the probe had not adopted the file (mtime-based scan missed it).
 - "A toast that can't display (quiet time, DND) is detected and falls back to an overlay" (DESIGN.md delivery table): only partly; the check used (`SHQueryUserNotificationState`) does not see Windows 11 Do Not Disturb or Focus (#11), so during DND a toast is sent and Windows files it silently instead.
 - The old app's repo looked unlicensed (no root LICENSE): it is MIT (README and `EveChatNotifier/License.txt`).

@@ -370,8 +370,8 @@ mod tests {
 
     #[test]
     fn a_pilot_keeps_its_accent_and_the_case_does_not_matter() {
-        assert_eq!(accent_for("Jarna"), accent_for("jarna"));
-        assert!(ACCENTS.contains(&accent_for("Psianna Archeia").as_str()));
+        assert_eq!(accent_for("Holden"), accent_for("holden"));
+        assert!(ACCENTS.contains(&accent_for("Naomi Nagata").as_str()));
     }
 
     #[test]

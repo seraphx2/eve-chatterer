@@ -3,7 +3,7 @@
 //! Questions it answers:
 //!   1. Does SetWinEventHook(EVENT_SYSTEM_FOREGROUND) report every focus
 //!      change between two EVE clients (and everything else), with no polling?
-//!   2. Can we get exe + title + character name ("EVE - Jarna") cheaply and
+//!   2. Can we get exe + title + character name ("EVE - Holden") cheaply and
 //!      without elevation?
 //!   3. Do titles change under us (login screen -> character) and do we see it?
 //!

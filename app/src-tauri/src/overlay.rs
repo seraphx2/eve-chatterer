@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn labels_are_valid_and_distinct_for_names_with_odd_characters() {
-        let keys = [overlay_key(Some("12345"), "Jarna"), overlay_key(None, "Test Person / Jr."), overlay_key(None, "Psianna Archeia")];
+        let keys = [overlay_key(Some("12345"), "Holden"), overlay_key(None, "Test Person / Jr."), overlay_key(None, "Naomi Nagata")];
         let labels: Vec<String> = keys.iter().map(|k| label_for(k)).collect();
         for l in &labels {
             assert!(l.chars().all(|c| c.is_ascii_alphanumeric() || "-_/:".contains(c)), "{l}");
@@ -833,9 +833,9 @@ mod tests {
 
     #[test]
     fn overlay_key_prefers_the_id_and_falls_back_to_a_lowercased_name() {
-        assert_eq!(overlay_key(Some("42"), "Jarna"), "id:42");
-        assert_eq!(overlay_key(None, "Jarna"), "name:jarna");
-        assert_eq!(overlay_key(Some(""), "Jarna"), "name:jarna");
+        assert_eq!(overlay_key(Some("42"), "Holden"), "id:42");
+        assert_eq!(overlay_key(None, "Holden"), "name:holden");
+        assert_eq!(overlay_key(Some(""), "Holden"), "name:holden");
     }
 
     #[test]

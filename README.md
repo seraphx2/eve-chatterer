@@ -10,6 +10,12 @@ EVE Chatterer watches your EVE chat logs and tells you when something needs your
 
 It's a small app that sits in your system tray and stays out of the way.
 
+![An alert over the game: Amos Burton mentioned Holden in Local](docs/images/panel.png)
+
+![The same kind of alert as a Windows notification, with a Switch to button](docs/images/toasts.png)
+
+<sub>Concept images from the design mockups; the real alerts match them closely.</sub>
+
 ---
 
 ## Is it safe to use?
@@ -67,9 +73,17 @@ Each character's alerts appear over **its own EVE window**, inside the game area
 
 There are three styles, which you can choose per channel:
 
-- **Strip**: one compact line. Good for busy channels.
-- **Panel**: sender, message and why it alerted. The usual choice.
-- **Beacon**: larger and more noticeable, and it stays longer. Used for private messages by default.
+**Panel**: sender, message and why it alerted. The usual choice. The blue badge counts repeat lines folded into one alert.
+
+![Panel alerts](docs/images/panel.png)
+
+**Strip**: one compact line. Good for busy channels.
+
+![Strip alerts](docs/images/strip.png)
+
+**Beacon**: larger and more noticeable, and it stays longer. Used for private messages by default.
+
+![Beacon alerts](docs/images/beacon.png)
 
 ### Moving and resizing
 
@@ -85,6 +99,10 @@ When you aren't in the game (you're in a browser, in Discord, or your EVE window
 - Notifications follow the overlay style: Strips go quickly, Panels stay a while, Beacons stay until you dismiss them. **A mention of your name always stays** until you deal with it.
 - Several lines from the same channel update one notification with a count, instead of stacking up.
 - They respect Windows **Do Not Disturb** and **Focus**, and anything you miss waits in Action Center.
+
+![Windows notifications for a mention and a keyword](docs/images/toasts.png)
+
+<img src="docs/images/actioncenter.png" alt="Missed alerts waiting in Action Center" width="400">
 
 ---
 

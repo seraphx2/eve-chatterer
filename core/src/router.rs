@@ -114,8 +114,8 @@ pub struct Decision {
 ///    genuinely visible (e.g. each client fixed to its own monitor in a
 ///    multi-boxing setup). Showing an alert on a screen the user isn't
 ///    looking at defeats the point of an alert. Found live (2026-09-27,
-///    owner: "im on psianna, and jarna's Local notifications are still
-///    showing up on Jarna's screen" — a follow-on to the same-day anchor fix
+///    owner: "im on naomi, and holden's Local notifications are still
+///    showing up on Holden's screen" — a follow-on to the same-day anchor fix
 ///    below, which only covered a *hidden* alerted client, not one visible
 ///    on its own separate screen while unfocused).
 /// 2. Otherwise, the alerted pilot's own window if it is on screen — a
@@ -265,7 +265,7 @@ mod tests {
     }
 
     fn two() -> Vec<ClientState> {
-        vec![client("Jarna", 10, MON_L), client("Psianna", 20, MON_R)]
+        vec![client("Holden", 10, MON_L), client("Naomi", 20, MON_R)]
     }
 
     /// Own-name mentions default to a Beacon.
@@ -284,40 +284,40 @@ mod tests {
 
     #[test]
     fn default_suppresses_only_the_focused_pilot() {
-        let s = snap(two(), Some("Jarna"));
-        let d = route(&alert(&["Jarna", "Psianna"]), &s, &RouterConfig::default());
-        assert_eq!(only(&d, "Jarna"), Outcome::Suppressed(SuppressedBy::FocusedPilot));
-        // Psianna's own monitor (MON_R) is genuinely on screen too, but the
-        // user is looking at Jarna's - the alert must land there, not on a
+        let s = snap(two(), Some("Holden"));
+        let d = route(&alert(&["Holden", "Naomi"]), &s, &RouterConfig::default());
+        assert_eq!(only(&d, "Holden"), Outcome::Suppressed(SuppressedBy::FocusedPilot));
+        // Naomi's own monitor (MON_R) is genuinely on screen too, but the
+        // user is looking at Holden's - the alert must land there, not on a
         // screen nobody is watching just because it happens to belong to the
         // pilot it's about.
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
     }
 
     #[test]
     fn everything_goes_through_when_focus_is_not_on_an_eve_client() {
         let s = snap(two(), None);
-        let d = route(&alert(&["Jarna", "Psianna"]), &s, &RouterConfig::default());
+        let d = route(&alert(&["Holden", "Naomi"]), &s, &RouterConfig::default());
         assert!(d.iter().all(|d| matches!(d.outcome, Outcome::Deliver(_))));
     }
 
     #[test]
     fn allow_all_and_visible_policies_come_from_each_targets_prefs() {
-        let s = snap(two(), Some("Jarna"));
+        let s = snap(two(), Some("Holden"));
         let allow = Prefs { suppression: Suppression::AllowAll, ..Prefs::default() };
-        let d = route(&alert_with(vec![("Jarna", Reason::OwnName, allow)]), &s, &RouterConfig::default());
-        assert!(matches!(only(&d, "Jarna"), Outcome::Deliver(_)));
+        let d = route(&alert_with(vec![("Holden", Reason::OwnName, allow)]), &s, &RouterConfig::default());
+        assert!(matches!(only(&d, "Holden"), Outcome::Deliver(_)));
 
         let visible = || Prefs { suppression: Suppression::VisibleOnScreen, ..Prefs::default() };
-        let a = alert_with(vec![("Jarna", Reason::OwnName, visible()), ("Psianna", Reason::OwnName, visible())]);
+        let a = alert_with(vec![("Holden", Reason::OwnName, visible()), ("Naomi", Reason::OwnName, visible())]);
         let d = route(&a, &s, &RouterConfig::default());
-        assert_eq!(only(&d, "Psianna"), Outcome::Suppressed(SuppressedBy::VisibleOnScreen), "visible on the other monitor");
+        assert_eq!(only(&d, "Naomi"), Outcome::Suppressed(SuppressedBy::VisibleOnScreen), "visible on the other monitor");
 
         // A minimized client is not visible, so it still alerts.
         let mut clients = two();
         clients[1].minimized = true;
-        let d = route(&a, &snap(clients, Some("Jarna")), &RouterConfig::default());
-        assert!(matches!(only(&d, "Psianna"), Outcome::Deliver(_)));
+        let d = route(&a, &snap(clients, Some("Holden")), &RouterConfig::default());
+        assert!(matches!(only(&d, "Naomi"), Outcome::Deliver(_)));
     }
 
     #[test]
@@ -325,17 +325,17 @@ mod tests {
         // The user is in another app with the clients still visible behind
         // it: an overlay (owned by its client, not topmost) would land behind
         // that app, so Auto delivery uses the notification area instead.
-        let d = route(&alert(&["Jarna", "Psianna"]), &snap(two(), None), &RouterConfig::default());
-        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![toast("Jarna")]));
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![toast("Psianna")]));
+        let d = route(&alert(&["Holden", "Naomi"]), &snap(two(), None), &RouterConfig::default());
+        assert_eq!(only(&d, "Holden"), Outcome::Deliver(vec![toast("Holden")]));
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![toast("Naomi")]));
     }
 
     #[test]
     fn being_away_overrides_suppression_and_uses_a_toast() {
-        let mut s = snap(two(), Some("Jarna"));
+        let mut s = snap(two(), Some("Holden"));
         s.idle = Duration::from_secs(10 * 60);
-        let d = route(&alert(&["Jarna"]), &s, &RouterConfig::default());
-        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![toast("Jarna")]));
+        let d = route(&alert(&["Holden"]), &s, &RouterConfig::default());
+        assert_eq!(only(&d, "Holden"), Outcome::Deliver(vec![toast("Holden")]));
     }
 
     #[test]
@@ -346,13 +346,13 @@ mod tests {
             c.rect = None;
         }
         let mut s = snap(clients, None);
-        let d = route(&alert(&["Psianna"]), &s, &RouterConfig::default());
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![toast("Psianna")]));
+        let d = route(&alert(&["Naomi"]), &s, &RouterConfig::default());
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![toast("Naomi")]));
 
         s.notifications_ok = false;
-        let d = route(&alert(&["Psianna"]), &s, &RouterConfig::default());
+        let d = route(&alert(&["Naomi"]), &s, &RouterConfig::default());
         assert_eq!(
-            only(&d, "Psianna"),
+            only(&d, "Naomi"),
             Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]),
             "falls back to the pilot's last known monitor"
         );
@@ -362,35 +362,35 @@ mod tests {
     fn windowed_clients_get_a_following_overlay_and_borderless_ones_a_monitor_overlay() {
         let mut clients = two();
         clients[0].rect = Some(Rect { left: -1500, top: 100, right: -300, bottom: 900 }); // Windowed
-        let d = route(&forced_overlay(&["Jarna", "Psianna"]), &snap(clients, None), &RouterConfig::default());
-        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![ov(Anchor::FollowWindow { hwnd: 10 })]));
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
+        let d = route(&forced_overlay(&["Holden", "Naomi"]), &snap(clients, None), &RouterConfig::default());
+        assert_eq!(only(&d, "Holden"), Outcome::Deliver(vec![ov(Anchor::FollowWindow { hwnd: 10 })]));
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
     }
 
     #[test]
     fn a_hidden_pilots_alert_anchors_to_whichever_client_the_user_is_looking_at() {
-        // Psianna is minimized (not on screen); the user is looking at Jarna.
-        // The alert must land on Jarna's screen, not on Psianna's own,
+        // Naomi is minimized (not on screen); the user is looking at Holden.
+        // The alert must land on Holden's screen, not on Naomi's own,
         // last-known, currently-invisible one — that's the whole point of an
         // alert about a pilot you aren't looking at.
         let mut clients = two();
         clients[1].minimized = true;
         clients[1].rect = None; // monitor stays: last known
-        let d = route(&alert(&["Psianna"]), &snap(clients, Some("Jarna")), &RouterConfig::default());
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
+        let d = route(&alert(&["Naomi"]), &snap(clients, Some("Holden")), &RouterConfig::default());
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
     }
 
     #[test]
     fn a_hidden_pilots_alert_still_borrows_a_visible_clients_screen_without_focus() {
         // Nobody is focused (say, the user alt-tabbed to a third, non-EVE
-        // app), but Jarna's client is still sitting visibly on screen, and
-        // overlays are forced (Auto would use the notification area here). That is strictly better to anchor to than Psianna's own,
+        // app), but Holden's client is still sitting visibly on screen, and
+        // overlays are forced (Auto would use the notification area here). That is strictly better to anchor to than Naomi's own,
         // definitely-invisible last known spot.
         let mut clients = two();
         clients[1].minimized = true;
         clients[1].rect = None;
-        let d = route(&forced_overlay(&["Psianna"]), &snap(clients, None), &RouterConfig::default());
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
+        let d = route(&forced_overlay(&["Naomi"]), &snap(clients, None), &RouterConfig::default());
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
     }
 
     #[test]
@@ -406,8 +406,8 @@ mod tests {
         clients[1].rect = None;
         let mut s = snap(clients, None);
         s.notifications_ok = false;
-        let d = route(&alert(&["Psianna"]), &s, &RouterConfig::default());
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
+        let d = route(&alert(&["Naomi"]), &s, &RouterConfig::default());
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
     }
 
     #[test]
@@ -415,18 +415,18 @@ mod tests {
         let s = snap(two(), None);
         let both = Prefs { delivery: DeliveryMode::Both, sound: true, ..Prefs::default() };
         let sound = Prefs { delivery: DeliveryMode::SoundOnly, ..Prefs::default() };
-        let a = alert_with(vec![("Jarna", Reason::OwnName, both), ("Psianna", Reason::OwnName, sound)]);
+        let a = alert_with(vec![("Holden", Reason::OwnName, both), ("Naomi", Reason::OwnName, sound)]);
         let d = route(&a, &s, &RouterConfig::default());
         assert_eq!(
-            only(&d, "Jarna"),
-            Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L)), toast("Jarna"), Delivery::Sound])
+            only(&d, "Holden"),
+            Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L)), toast("Holden"), Delivery::Sound])
         );
-        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Sound]));
+        assert_eq!(only(&d, "Naomi"), Outcome::Deliver(vec![Delivery::Sound]));
     }
 
     #[test]
     fn an_unknown_client_still_borrows_a_visible_viewers_screen() {
-        // No client at all is known for this pilot, but Jarna's is visible;
+        // No client at all is known for this pilot, but Holden's is visible;
         // same principle as a hidden pilot's alert - anchor to what the user
         // can actually see rather than nowhere in particular.
         let d = route(&forced_overlay(&["Ghost"]), &snap(two(), None), &RouterConfig::default());
@@ -457,9 +457,9 @@ mod tests {
 
     #[test]
     fn the_style_follows_why_the_alert_fired_unless_the_settings_force_one() {
-        let s = snap(two(), Some("Psianna"));
+        let s = snap(two(), Some("Naomi"));
         let cfg = RouterConfig::default();
-        let style = |r: Reason, p: Prefs| style_of(&route(&alert_with(vec![("Jarna", r, p)]), &s, &cfg));
+        let style = |r: Reason, p: Prefs| style_of(&route(&alert_with(vec![("Holden", r, p)]), &s, &cfg));
         let d = Prefs::default;
         assert_eq!(style(Reason::OwnName, d()), OverlayStyle::Beacon);
         assert_eq!(style(Reason::Keyword("jita".into()), d()), OverlayStyle::Panel);
@@ -475,8 +475,8 @@ mod tests {
     fn the_style_map_can_be_remapped() {
         let mut cfg = RouterConfig::default();
         cfg.styles.keyword = OverlayStyle::Strip;
-        let s = snap(two(), Some("Psianna"));
-        let a = alert_with(vec![("Jarna", Reason::Keyword("k".into()), Prefs::default())]);
+        let s = snap(two(), Some("Naomi"));
+        let a = alert_with(vec![("Holden", Reason::Keyword("k".into()), Prefs::default())]);
         assert_eq!(style_of(&route(&a, &s, &cfg)), OverlayStyle::Strip);
     }
 
@@ -484,7 +484,7 @@ mod tests {
     fn decisions_carry_the_caps_for_the_governor() {
         let cap = (LayerKey::Pilot, RateCap { per_minute: 3, over: OverCap::Fold });
         let p = Prefs { caps: vec![cap.clone()], ..Prefs::default() };
-        let d = route(&alert_with(vec![("Jarna", Reason::OwnName, p)]), &snap(two(), None), &RouterConfig::default());
+        let d = route(&alert_with(vec![("Holden", Reason::OwnName, p)]), &snap(two(), None), &RouterConfig::default());
         assert_eq!(d[0].caps, vec![cap]);
     }
 }
