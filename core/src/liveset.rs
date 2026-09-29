@@ -175,7 +175,9 @@ impl LiveSet {
     /// picks the newest session per (character, channel) and starts following
     /// any that are new. Cheap enough to call every few seconds.
     pub fn rescan(&mut self) -> io::Result<Vec<Discovery>> {
-        let mut newest: HashMap<(String, String), (SessionName, PathBuf, Option<SystemTime>, bool)> = HashMap::new();
+        /// (session, path, created, cloud placeholder) by (character, channel).
+        type Newest = HashMap<(String, String), (SessionName, PathBuf, Option<SystemTime>, bool)>;
+        let mut newest: Newest = HashMap::new();
         for entry in fs::read_dir(&self.dir)? {
             let Ok(entry) = entry else { continue };
             let path = entry.path();

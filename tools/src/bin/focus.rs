@@ -94,12 +94,11 @@ mod win {
                 LAST_HOOK_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
                 report("FOREGROUND", hwnd);
             }
-            EVENT_OBJECT_NAMECHANGE => {
+            EVENT_OBJECT_NAMECHANGE
                 // Fires for every window on the desktop; only the foreground window's own title matters.
-                if id_object == OBJID_WINDOW.0 && id_child == 0 && hwnd == GetForegroundWindow() {
+                if id_object == OBJID_WINDOW.0 && id_child == 0 && hwnd == GetForegroundWindow() => {
                     report("RENAMED", hwnd);
                 }
-            }
             _ => {}
         }
     }

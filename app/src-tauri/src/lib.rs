@@ -12,6 +12,7 @@ mod runner;
 mod state;
 mod testalerts;
 mod toast;
+mod updates;
 
 use eve_chatterer_core::settings::Settings;
 use state::{AppState, SettingsData, Status};
@@ -132,6 +133,60 @@ async fn pick_sound_file(app: AppHandle) -> Result<Option<String>, String> {
     }
 }
 
+/// Update state for the About page (updates.rs).
+#[tauri::command]
+fn get_update_status() -> updates::UpdateStatus {
+    updates::status()
+}
+
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) -> Result<updates::UpdateStatus, String> {
+    Ok(updates::check(&app).await)
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    updates::install(app).await
+}
+
+/// Whether Windows starts the app at login. Windows' own Run entry is the
+/// truth (the installer creates it on a fresh install, same as dev-prompt).
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// Sync on purpose, so quick toggles apply in click order.
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let al = app.autolaunch();
+    if enabled { al.enable() } else { al.disable() }.map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    if !enabled {
+        clear_startup_approved();
+    }
+    Ok(())
+}
+
+/// Turning start-at-login off removes the Run value but leaves the Task
+/// Manager on/off state Windows keeps beside it; nothing else would ever
+/// remove it.
+#[cfg(windows)]
+fn clear_startup_approved() {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegDeleteKeyValueW, HKEY_CURRENT_USER};
+    unsafe {
+        let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, w!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"), w!("EVE Chatterer"));
+    }
+}
+
+/// The argument the login entry starts the app with, so a login launch is
+/// distinguishable from a manual one. Nothing branches on it yet: every
+/// launch starts quietly in the tray.
+const AUTOSTART_ARG: &str = "--autostart";
+
 /// The overlay page calls this once it is listening for alerts.
 #[tauri::command]
 async fn overlay_ready(app: AppHandle, state: State<'_, AppState>, label: String) -> Result<(), String> {
@@ -224,6 +279,8 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_ARG])))
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -238,7 +295,12 @@ pub fn run() {
             reposition_resize,
             reposition_box_height,
             preview_sound,
-            pick_sound_file
+            pick_sound_file,
+            get_update_status,
+            check_for_updates,
+            install_update,
+            get_autostart,
+            set_autostart
         ])
         .setup(|app| {
             let settings_i = MenuItem::with_id(app, "tray-settings", "Settings…", true, None::<&str>)?;
@@ -253,6 +315,14 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "tray-settings" => open_settings(app),
                     "tray-quit" => app.exit(0),
+                    updates::TRAY_ITEM => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = updates::install(app).await {
+                                toast::plain("Could not install the update", &e);
+                            }
+                        });
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -268,6 +338,7 @@ pub fn run() {
 
             toast::init(app.handle());
             audio::start();
+            updates::start(app.handle().clone(), menu.clone());
             clientmoves::start(app.handle().clone());
             runner::spawn(app.handle().clone());
             if std::env::args().any(|a| a == "--selftest") {
