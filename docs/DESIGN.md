@@ -74,7 +74,7 @@ Overlays for in-game events, native Windows notifications for app-level events (
 | Situation | Delivery |
 |---|---|
 | A client is focused (its own matches suppressed) | Overlay for other pilots |
-| No client focused, some client visible | Overlay |
+| No client focused, some client visible | Native toast (changed 2026-09-28: overlays now belong to their EVE client and sit behind whatever app has focus, so an overlay here would go unseen) |
 | No client visible (minimized, other desktop, other fullscreen app) | Native toast with a "switch to <pilot>" action |
 | User idle for N minutes | Toast (persists in Action Center), optional sound |
 | Toast cannot display (quiet time, DND) | Fall back to overlay; sound is a separate option |
@@ -121,7 +121,7 @@ Overlays are separate topmost, click-through, non-activating windows in screen c
 - **The screen the user is focused on always wins** (`core/src/router.rs::anchor_for`), even when the *alerted* pilot's own client is also genuinely on screen elsewhere (e.g. each client fixed to its own monitor). Found live in two stages, both 2026-09-27, same underlying principle: (1) owner, focused on Jarna: "if im on jarna, and something happens in Psianna's chat rooms, the notification needs to show up on Jarna's screen, not Psianna's" — first fix only redirected when the alerted pilot's client was *hidden*; (2) owner, focused on Psianna: "jarna's Local notifications are still showing up on Jarna's screens" — revealed the first fix wasn't enough, because Jarna's client was still genuinely on screen (its own monitor), so the old "is it visible at all" check let it win over "is it what the user is looking at." An alert shown on a screen nobody is watching defeats the point of an alert, no matter whose screen it technically is.
 - Priority when placing an overlay: (1) the focused client's screen, if on screen; (2) otherwise the alerted pilot's own screen, if on screen (a neutral choice when nobody in particular is focused); (3) otherwise any other on-screen client; (4) otherwise the alerted pilot's own last known monitor, as a least-bad guess (Auto mode would usually toast instead in this last case; it only matters when a toast is blocked and falls back to an overlay).
 - Automatic choice from whether the client window fills its monitor; per-pilot override.
-- Suppression (whether to show the alert at all) is a separate, already-correct concern from anchoring (which *screen* to use if shown): `Suppression::FocusedOnly` (default) already skips only the alert for the pilot the user is currently focused on, and `Suppression::AllowAll` already exists per pilot/channel for "never suppress even my own focused character" — not yet exposed in the settings UI (`ChannelRow.svelte` has no Suppression control yet).
+- Suppression (whether to show the alert at all) is a separate, already-correct concern from anchoring (which *screen* to use if shown): `Suppression::FocusedOnly` (default) already skips only the alert for the pilot the user is currently focused on, and `Suppression::AllowAll` already exists per pilot/channel for "never suppress even my own focused character". Exposed in the settings screen as "Suppress", after Style (`ChannelRow.svelte`, 2026-09-28): "While in this client" / "While on screen" / "Never". A character's own typed lines still never alert that character, whatever this is set to (owner, 2026-09-28: alerting on your own message on your own screen would only confuse people).
 
 ## Overlay reposition & resize (owner decisions 2026-09-28)
 

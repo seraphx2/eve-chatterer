@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { type ChannelKind, type Layer, type OverlayStyle, type Settings, layerToEdit, peekEditLayer, resolve } from "./model";
+  import { type ChannelKind, type Layer, type OverlayStyle, type Settings, type Suppression, layerToEdit, peekEditLayer, resolve } from "./model";
 
   let {
     settings,
@@ -77,6 +77,20 @@
         <option value="strip">Strip</option>
       </select>
       {#if showDeviation && own("style")}<button type="button" class="revert" onclick={() => set("style", undefined)}>↺ use default</button>{/if}
+    </div>
+
+    <div class="field">
+      <span class="flabel">{#if showDeviation && own("suppression")}<span class="pip"></span>{/if}Suppress</span>
+      <select
+        value={resolved.suppression.value}
+        onchange={(e) => set("suppression", e.currentTarget.value as Suppression)}
+        title="When to skip an alert because you are already looking at that character"
+      >
+        <option value="focused_only">While in this client</option>
+        <option value="visible_on_screen">While on screen</option>
+        <option value="allow_all">Never</option>
+      </select>
+      {#if showDeviation && own("suppression")}<button type="button" class="revert" onclick={() => set("suppression", undefined)}>↺ use default</button>{/if}
     </div>
 
     <div class="field">

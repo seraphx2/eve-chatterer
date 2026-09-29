@@ -26,7 +26,6 @@
 - Where the settings and pilot registry files live (proposal: `%APPDATA%\eve-chatterer\`), and migrating older files as fields are added.
 - Confirm the built-in kind defaults with the owner (private = everything as a Beacon; Local/Alliance capped at 6 per minute, public at 4, folding).
 - The overlay manager must honor `Outcome::Limited(Fold)` by incrementing the count badge of the alert that is already showing.
-- Expose `Suppression` (`FocusedOnly`/`VisibleOnScreen`/`AllowAll`, `core/src/prefs.rs`) per channel/character in `ChannelRow.svelte` — the core and `Layer.suppression` already support it, but the settings screen has no control for it yet. Needed for "I absolutely can't miss this even on my own focused character" (owner, 2026-09-27): set that pilot/channel to `AllowAll` to stop the default focused-pilot suppression from applying to it.
 
 ## Overlay reposition (see DESIGN.md "Overlay reposition & resize")
 - The reposition hotkey (Ctrl+Alt+O) is fixed; make it configurable.
