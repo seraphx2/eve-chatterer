@@ -100,8 +100,6 @@ When you aren't in the game (you're in a browser, in Discord, or your EVE window
 - Several lines from the same channel update one notification with a count, instead of stacking up.
 - They respect Windows **Do Not Disturb** and **Focus**, and anything you miss waits in Action Center.
 
-![Windows notifications for a mention and a keyword](docs/images/toasts.png)
-
 <img src="docs/images/actioncenter.png" alt="Missed alerts waiting in Action Center" width="400">
 
 ---
