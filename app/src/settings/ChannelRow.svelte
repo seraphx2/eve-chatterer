@@ -86,8 +86,8 @@
         onchange={(e) => set("suppression", e.currentTarget.value as Suppression)}
         title="When to skip an alert because you are already looking at that character"
       >
-        <option value="focused_only">While in this client</option>
-        <option value="visible_on_screen">While on screen</option>
+        <option value="focused_only">When client is focused</option>
+        <option value="visible_on_screen">When client is visible</option>
         <option value="allow_all">Never</option>
       </select>
       {#if showDeviation && own("suppression")}<button type="button" class="revert" onclick={() => set("suppression", undefined)}>↺ use default</button>{/if}

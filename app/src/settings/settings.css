@@ -204,7 +204,10 @@ p {
   padding: 30px 40px 60px;
 }
 .page {
-  max-width: 720px;
+  /* Room for a channel row's five fields on one line (Mode, Style, Suppress,
+     Rate cap, Sound); at the window's 1100px minimum the column tops out
+     around 770px anyway. */
+  max-width: 800px;
   margin: 0 auto;
 }
 h1 {
