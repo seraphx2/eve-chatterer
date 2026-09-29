@@ -123,6 +123,20 @@ Overlays are separate topmost, click-through, non-activating windows in screen c
 - Automatic choice from whether the client window fills its monitor; per-pilot override.
 - Suppression (whether to show the alert at all) is a separate, already-correct concern from anchoring (which *screen* to use if shown): `Suppression::FocusedOnly` (default) already skips only the alert for the pilot the user is currently focused on, and `Suppression::AllowAll` already exists per pilot/channel for "never suppress even my own focused character" — not yet exposed in the settings UI (`ChannelRow.svelte` has no Suppression control yet).
 
+## Overlay reposition & resize (owner decisions 2026-09-28)
+
+Modeled on Discord's in-game overlay: a hotkey (Ctrl+Alt+O, `lib.rs::reposition_shortcut`) drops click-through so the player can drag each character's alert region and resize its width, rather than a position grid in the settings screen. Found and settled live, in order:
+- **One window per character, not per monitor** (`overlay.rs`). Per-monitor windows were shared by every character on that monitor, so "this character's position" had no window to belong to.
+- **Only the focused client's character** is offered for positioning (every on-screen client when focus is elsewhere). Offering every known character stacked offline alts on top of each other.
+- **The placeholder is a real sample Panel** inside a dashed outline, so what is positioned is what an alert looks like at that width.
+- **Width only, per character, not per style**; clamped to 320-760 logical px (`pilots::MIN/MAX_OVERLAY_WIDTH`) for readability, not arbitrary limits.
+- **Drag and resize are ours, not the OS's.** The page reports pointer deltas; Rust moves the window. A native window drag looked and behaved like dragging a desktop window and could leave the game or the monitor.
+- **Constrained to the game's viewing area**: the client area (`winapi::client_rect_of`), excluding a windowed client's title bar and borders; the monitor for fullscreen.
+- **Saved relative to that area** (`OverlayPlacement { fx, fy, width }`, fractions of its free space), so it survives the client moving or resizing. A box in the lower half makes alerts stack upward from it.
+- **The box's position is only ever computed, never read back** from the window during a session; reading back an asynchronously moved window drifted ("like it's in water"). Fractions use a fixed reference height (`BOX_H`) on both save and restore; using the measured height on one side made the box creep on every open/close.
+- **Overlays belong to their EVE client**: each is an owned window of it (`platform::set_owner`), so it sits directly above that client rather than topmost over every app; it is pinned to the client's virtual desktop and hidden in step with the client's cloak events (a desktop switch otherwise flashed it on the new desktop); and a WinEvent hook (`clientmoves.rs`, out-of-context: nothing loaded into EVE) moves it as the client is dragged.
+- **Not injected.** Discord draws inside the game by hooking its renderer; CLAUDE.md forbids injecting into the client. The owned window is the closest equivalent without it. An opt-in injected renderer could only follow written approval from CCP.
+
 ## Overlay styles
 
 Three styles, used together for different situations (mockups with the exact look: `docs/design/alert-styles.html`, derived from the owner's EVE Drones window: translucent steel glass, sharp corners, thin type, three-segment bar, one blue badge):

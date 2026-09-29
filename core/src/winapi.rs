@@ -3,9 +3,9 @@
 use crate::presence::Rect;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use windows::core::{BOOL, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -13,7 +13,7 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::UI::Shell::SHQueryUserNotificationState;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    EnumChildWindows, EnumWindows, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
     IsIconic, IsWindowVisible,
 };
 
@@ -161,6 +161,19 @@ pub fn rect_of(h: HWND) -> Option<Rect> {
             .ok()?;
     }
     Some(r.into())
+}
+
+/// The game's own viewing area in screen coordinates: the client area,
+/// without the title bar and borders of a windowed client. This is the
+/// region overlays are placed and clamped in.
+pub fn client_rect_of(h: HWND) -> Option<Rect> {
+    let mut r = RECT::default();
+    unsafe {
+        GetClientRect(h, &mut r).ok()?;
+        let mut origin = POINT { x: 0, y: 0 };
+        ClientToScreen(h, &mut origin).as_bool().then_some(())?;
+        Some(Rect { left: origin.x, top: origin.y, right: origin.x + r.right, bottom: origin.y + r.bottom })
+    }
 }
 
 pub fn monitor_rect_of(h: HWND) -> Option<Rect> {

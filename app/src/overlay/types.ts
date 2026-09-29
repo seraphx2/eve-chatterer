@@ -19,9 +19,18 @@ export interface Alert {
   lifetimeMs: number;
   /** Lines folded into this alert; the badge shows when above 1. */
   count: number;
+  /** This window's alerts grow upward (its box sits in the lower half of the game). */
+  stackUp: boolean;
 }
 
 export interface Fold {
   pilot: string;
   channel: string;
+}
+
+/** Mirrors `RepositionInfo` in src-tauri/src/overlay.rs. */
+export interface RepositionInfo {
+  name: string;
+  tag: string;
+  accent: string;
 }

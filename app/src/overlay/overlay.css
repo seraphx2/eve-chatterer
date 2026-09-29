@@ -36,7 +36,10 @@ body {
   top: 24px;
   left: 50%;
   translate: -50% 0;
-  width: 460px;
+  /* Fills the window's own (per-character, user-resizable) width, minus the
+     30px margin on each side reserved for glow/shadow - kept in sync with
+     MARGIN in app/src-tauri/src/overlay.rs. */
+  width: calc(100vw - 60px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -138,7 +141,7 @@ b {
 /* ---------- Panel ---------- */
 .panel {
   position: relative;
-  width: 420px;
+  width: 100%;
 }
 .panel .notch {
   position: absolute;
@@ -188,7 +191,7 @@ b {
 
 /* ---------- Strip ---------- */
 .strip {
-  width: 420px;
+  width: 100%;
   height: 34px;
   display: grid;
   grid-template-columns: auto auto 1fr auto;
@@ -226,7 +229,7 @@ b {
 
 /* ---------- Beacon ---------- */
 .beacon {
-  width: 460px;
+  width: 100%;
   border-left: 4px solid var(--accent);
   --glow: color-mix(in srgb, var(--accent) 55%, transparent);
   padding: 12px 16px 12px 14px;
@@ -265,6 +268,85 @@ b {
   justify-content: space-between;
   align-items: center;
   margin-top: 10px;
+}
+
+/* ---------- Reposition mode ---------- */
+/* A dashed placeholder standing in for the character's alerts while its
+   window is draggable/resizable (docs/DESIGN.md, "Overlay reposition &
+   resize"). Sits at the same spot `.stack` would, so it previews exactly
+   where and how wide real alerts will land. */
+/* Alerts in a box placed in the lower half of the game grow upward. */
+.stack.up {
+  top: auto;
+  bottom: 24px;
+  flex-direction: column-reverse;
+}
+
+/* In reposition mode the window is sized to fit this box exactly (the page
+   measures it and reports it to the host, 6px of room above and below), so
+   what is clamped inside the game is exactly what you see. */
+.stack.reposition {
+  top: 6px;
+}
+.reposition {
+  cursor: grab;
+  touch-action: none;
+  align-items: stretch;
+  gap: 0;
+  padding: 8px;
+  outline: 2px dashed color-mix(in srgb, var(--pilot) 75%, white);
+  outline-offset: 0;
+  background: color-mix(in srgb, var(--pilot) 8%, transparent);
+}
+.reposition-preview {
+  pointer-events: none;
+}
+.reposition-preview .alert {
+  animation: none;
+}
+/* Tauri's drag-region check looks at the exact click target, not just
+   whether it's inside a `data-tauri-drag-region` element - these are
+   decorative only, so a click anywhere on them still falls through to the
+   box itself instead of silently failing to start the drag. */
+.reposition-tag,
+.reposition-hint {
+  pointer-events: none;
+}
+.reposition-tag {
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font: 600 12px var(--font);
+  letter-spacing: 0.02em;
+  color: var(--pilot);
+  background: color-mix(in srgb, var(--pilot) 20%, transparent);
+}
+.reposition-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+.reposition-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  border: none;
+  background: none;
+  padding: 0;
+}
+.reposition-grip::before {
+  content: "";
+  width: 4px;
+  height: 60%;
+  border-radius: 2px;
+  background: var(--edge-hi);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,7 @@
 //! Drives the core on a background thread: follow the logs, sample presence,
 //! route alerts and hand them to the overlay windows. Nothing here draws.
 
+use crate::overlay;
 use crate::overlay::{Fold, OverlayAlert};
 use crate::state::{AppState, PilotView};
 use eve_chatterer_core::engine::{Alert, Engine, EngineConfig, Event};
@@ -41,6 +42,15 @@ pub fn tag_for(app: &AppHandle, pilot_id: Option<&str>, pilot_name: &str) -> Str
         .and_then(|id| guard.as_ref()?.pilots().get(id))
         .map(eve_chatterer_core::pilots::Pilot::display_tag)
         .unwrap_or_else(|| tag_from_name(pilot_name))
+}
+
+/// This character's saved overlay position/width, if it has one — looked up
+/// fresh on every alert rather than cached, since it can change at any time
+/// via reposition mode.
+pub fn placement_for(app: &AppHandle, pilot_id: Option<&str>) -> Option<eve_chatterer_core::pilots::OverlayPlacement> {
+    let state = app.state::<AppState>();
+    let guard = state.engine.lock().unwrap();
+    pilot_id.and_then(|id| guard.as_ref()?.pilots().get(id)?.placement)
 }
 
 pub fn style_name(s: OverlayStyle) -> &'static str {
@@ -94,15 +104,27 @@ fn primary_rect(app: &AppHandle) -> Option<Rect> {
     })
 }
 
-/// (monitor, region to center in).
-fn placement(app: &AppHandle, anchor: Anchor, snap: &Snapshot) -> Option<(Rect, Rect)> {
+/// (monitor, region to place in, the EVE client that region belongs to).
+/// A monitor anchor (fullscreen client) still belongs to the on-screen
+/// client covering that monitor, preferring the focused one, so the overlay
+/// can be owned by it (overlay.rs, `Placement::owner`).
+fn placement(app: &AppHandle, anchor: Anchor, snap: &Snapshot) -> Option<(Rect, Rect, Option<isize>)> {
     match anchor {
-        Anchor::Monitor(m) => Some((m, m)),
+        Anchor::Monitor(m) => {
+            let on_m = |c: &&eve_chatterer_core::presence::ClientState| c.on_screen() && c.monitor == Some(m);
+            let owner = snap
+                .clients
+                .iter()
+                .filter(on_m)
+                .find(|c| snap.focused.as_deref().is_some_and(|f| f.eq_ignore_ascii_case(&c.character)))
+                .or_else(|| snap.clients.iter().find(on_m));
+            Some((m, owner.and_then(|c| c.rect).unwrap_or(m), owner.map(|c| c.hwnd)))
+        }
         Anchor::FollowWindow { hwnd } => snap.clients.iter().find(|c| c.hwnd == hwnd).and_then(|c| {
             let m = c.monitor?;
-            Some((m, c.rect.unwrap_or(m)))
+            Some((m, c.rect.unwrap_or(m), Some(hwnd)))
         }),
-        Anchor::Unknown => primary_rect(app).map(|m| (m, m)),
+        Anchor::Unknown => primary_rect(app).map(|m| (m, m, None)),
     }
 }
 
@@ -176,6 +198,8 @@ impl Runner {
         loop {
             let now = Instant::now();
             let snap = self.sampler.sample(now);
+            *self.app.state::<AppState>().last_snapshot.lock().unwrap() = Some(snap.clone());
+            self.app.state::<AppState>().overlays.follow(&self.app, &snap);
             if last_tick.is_none_or(|t| now.duration_since(t) >= TICK_EVERY) {
                 last_tick = Some(now);
                 let names: Vec<&str> = snap.clients.iter().map(|c| c.character.as_str()).collect();
@@ -255,16 +279,23 @@ impl Runner {
                 for delivery in deliveries {
                     match delivery {
                         Delivery::Overlay { anchor, style } => {
-                            let Some((monitor, region)) = placement(&self.app, *anchor, snap) else {
+                            let Some((monitor, region, owner)) = placement(&self.app, *anchor, snap) else {
                                 println!("       could not place the overlay: anchor={anchor:?} had no monitor");
                                 continue;
                             };
                             println!("       showing {style:?} on monitor ({},{})-({},{})", monitor.left, monitor.top, monitor.right, monitor.bottom);
                             let (reason, tone) = reason_text(&d.reason);
+                            let saved = placement_for(&self.app, d.pilot_id.as_deref());
+                            let width = saved.map(|p| p.width).unwrap_or(overlay::DEFAULT_OVERLAY_WIDTH);
+                            // Relative to whatever region the router picked (the
+                            // client window, or its monitor when fullscreen), so it
+                            // always lands inside the game (overlay.rs, OverlayPlacement).
+                            let custom_pos = saved.map(|p| (p.fx, p.fy));
+                            let key = overlay::overlay_key(d.pilot_id.as_deref(), &d.pilot_name);
                             state.overlays.show(
                                 &self.app,
-                                monitor,
-                                region,
+                                &key,
+                                overlay::Placement { monitor, region, width, custom_pos, owner },
                                 OverlayAlert {
                                     id: state.overlays.next_id(),
                                     style: style_name(*style),
@@ -278,6 +309,7 @@ impl Runner {
                                     tone,
                                     lifetime_ms: lifetime_ms(*style),
                                     count: 1,
+                                    stack_up: false,
                                 },
                             );
                             state.alerts_shown.fetch_add(1, Ordering::Relaxed);

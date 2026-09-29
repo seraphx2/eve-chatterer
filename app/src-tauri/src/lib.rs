@@ -2,8 +2,10 @@
 //! overlays over the game. The always-on part is the Rust core (see
 //! `runner`); WebView2 windows (overlays, settings) exist only while needed.
 
+mod clientmoves;
 mod diag;
 mod overlay;
+mod reposition;
 mod runner;
 mod state;
 mod testalerts;
@@ -13,6 +15,14 @@ use state::{AppState, SettingsData, Status};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+/// Toggles reposition mode for every known character. Chosen to be unlikely
+/// to collide with EVE's own bindings or Windows shortcuts; not yet
+/// user-configurable (docs/BACKLOG.md).
+fn reposition_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyO)
+}
 
 #[tauri::command]
 fn get_status(state: State<'_, AppState>) -> Status {
@@ -75,10 +85,52 @@ fn set_pilot_tag(app: AppHandle, state: State<'_, AppState>, pilot_id: String, t
     engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
+/// Clears a character's saved overlay position/width, so its alerts go back
+/// to the default centered placement. The settings screen's escape hatch for
+/// when a pin no longer makes sense (a monitor was removed, the window was
+/// dragged somewhere awkward) — reposition mode itself has no delete
+/// gesture, only drag/resize.
+#[tauri::command]
+fn clear_pilot_placement(app: AppHandle, state: State<'_, AppState>, pilot_id: String) -> Result<(), String> {
+    let mut guard = state.engine.lock().unwrap();
+    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+    engine.pilots_mut().set_placement(&pilot_id, None);
+    let pilots_path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pilots.json");
+    engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
+}
+
 /// The overlay page calls this once it is listening for alerts.
 #[tauri::command]
 async fn overlay_ready(app: AppHandle, state: State<'_, AppState>, label: String) -> Result<(), String> {
     state.overlays.ready(&app, &label);
+    Ok(())
+}
+
+/// Reposition-mode gestures from the overlay page. The page reports pointer
+/// deltas; the move/resize itself happens here, clamped inside the game, so
+/// it never behaves like dragging an ordinary desktop window.
+#[tauri::command]
+async fn reposition_gesture_start(state: State<'_, AppState>, label: String) -> Result<(), String> {
+    state.overlays.gesture_start(&label);
+    Ok(())
+}
+
+#[tauri::command]
+async fn reposition_move(state: State<'_, AppState>, label: String, dx: f64, dy: f64) -> Result<(), String> {
+    state.overlays.gesture_move(&label, dx, dy);
+    Ok(())
+}
+
+#[tauri::command]
+async fn reposition_resize(state: State<'_, AppState>, label: String, dx: f64) -> Result<(), String> {
+    state.overlays.gesture_resize(&label, dx);
+    Ok(())
+}
+
+/// The page's measured box height, so the window always fits it exactly.
+#[tauri::command]
+async fn reposition_box_height(state: State<'_, AppState>, label: String, height: f64) -> Result<(), String> {
+    state.overlays.set_box_height(&label, height);
     Ok(())
 }
 
@@ -126,8 +178,33 @@ pub fn run() {
         // A second launch just brings up the settings of the running instance.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| open_settings(app)))
         .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if *shortcut == reposition_shortcut() && event.state() == ShortcutState::Pressed {
+                        // Off the UI thread: toggling takes the overlay locks,
+                        // which the client-move watcher also takes while it
+                        // may be waiting on this thread (clientmoves.rs).
+                        let app = app.clone();
+                        std::thread::spawn(move || reposition::toggle(&app));
+                    }
+                })
+                .build(),
+        )
         .manage(AppState::new())
-        .invoke_handler(tauri::generate_handler![get_status, overlay_ready, get_settings_data, save_settings, remove_known_channel, set_pilot_tag])
+        .invoke_handler(tauri::generate_handler![
+            get_status,
+            overlay_ready,
+            get_settings_data,
+            save_settings,
+            remove_known_channel,
+            set_pilot_tag,
+            clear_pilot_placement,
+            reposition_gesture_start,
+            reposition_move,
+            reposition_resize,
+            reposition_box_height
+        ])
         .setup(|app| {
             let settings_i = MenuItem::with_id(app, "tray-settings", "Settings…", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "tray-quit", "Quit EVE Chatterer", true, None::<&str>)?;
@@ -150,6 +227,11 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            if let Err(e) = app.global_shortcut().register(reposition_shortcut()) {
+                eprintln!("could not register the reposition hotkey (Ctrl+Alt+O): {e}");
+            }
+
+            clientmoves::start(app.handle().clone());
             runner::spawn(app.handle().clone());
             if std::env::args().any(|a| a == "--selftest") {
                 testalerts::selftest(app.handle());

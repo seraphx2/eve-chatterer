@@ -3,6 +3,7 @@
 use crate::overlay::Overlays;
 use eve_chatterer_core::engine::Engine;
 use eve_chatterer_core::pilots::Pilot;
+use eve_chatterer_core::presence::Snapshot;
 use eve_chatterer_core::settings::Settings;
 use serde::Serialize;
 use std::sync::atomic::AtomicU64;
@@ -46,6 +47,14 @@ pub struct AppState {
     /// engine; commands that need it should report "not ready yet" rather
     /// than panic during that brief startup window.
     pub engine: Arc<Mutex<Option<Engine>>>,
+    /// The most recent presence sample, refreshed every poll by the runner
+    /// thread. Entering reposition mode reads it to start each pilot's
+    /// placeholder over its actual client window when one is on screen,
+    /// instead of always defaulting to the primary monitor.
+    pub last_snapshot: Mutex<Option<Snapshot>>,
+    /// True while a global-hotkey reposition session is open. Toggled by
+    /// `reposition::toggle`; read by the tray/settings UI to reflect state.
+    pub repositioning: Mutex<bool>,
 }
 
 impl AppState {
@@ -55,6 +64,8 @@ impl AppState {
             status: Mutex::new(Status::default()),
             alerts_shown: AtomicU64::new(0),
             engine: Arc::new(Mutex::new(None)),
+            last_snapshot: Mutex::new(None),
+            repositioning: Mutex::new(false),
         }
     }
 }

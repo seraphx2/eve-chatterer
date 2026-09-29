@@ -181,7 +181,9 @@ mod win {
                 let minimized = winapi::is_minimized(h);
                 let cloaked = winapi::cloaked(h) != 0;
                 let showing = !minimized && !cloaked;
-                let rect = if showing { winapi::rect_of(h) } else { None };
+                // The client area, not the frame: overlays belong inside the
+                // game's viewing area, never over a windowed client's title bar.
+                let rect = if showing { winapi::client_rect_of(h) } else { None };
                 let monitor = if showing { winapi::monitor_rect_of(h) } else { None };
                 if let Some(m) = monitor {
                     self.last_monitor.insert(character.clone(), m);

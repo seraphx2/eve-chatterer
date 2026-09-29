@@ -32,7 +32,50 @@ pub struct KnownChannel {
 /// Longest a tag (own or derived) is ever shown as, in the Strip overlay's badge.
 const MAX_TAG_LEN: usize = 5;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Readable-content bounds for a saved overlay width: narrow enough to tuck
+/// into a corner of the game window, wide enough that a Panel/Beacon's body
+/// text doesn't wrap into a ladder. `OverlayPlacement::clamped` enforces
+/// these; `app/src-tauri/src/overlay.rs` mirrors them for the window's own
+/// OS-level min/max size.
+pub const MIN_OVERLAY_WIDTH: f64 = 320.0;
+pub const MAX_OVERLAY_WIDTH: f64 = 760.0;
+
+/// A character's own saved overlay position and width, set by dragging it in
+/// "reposition mode" (a global hotkey) instead of the default
+/// centered-on-the-client-window placement.
+///
+/// The position is relative to the region the alert is drawn in (the EVE
+/// client window, or its monitor when the client is fullscreen), as a
+/// fraction of the free space: 0 is flush left/top, 1 flush right/bottom.
+/// Like Discord's in-game overlay, it stays inside the game and keeps its
+/// relative spot when the client is moved or resized (docs/DESIGN.md,
+/// "Overlay reposition & resize").
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayPlacement {
+    #[serde(default = "centered")]
+    pub fx: f64,
+    #[serde(default)]
+    pub fy: f64,
+    /// Logical pixels; always within `[MIN_OVERLAY_WIDTH, MAX_OVERLAY_WIDTH]`
+    /// on write (see `PilotRegistry::set_placement`).
+    pub width: f64,
+}
+
+fn centered() -> f64 {
+    0.5
+}
+
+impl OverlayPlacement {
+    fn clamped(mut self) -> OverlayPlacement {
+        self.width = self.width.clamp(MIN_OVERLAY_WIDTH, MAX_OVERLAY_WIDTH);
+        self.fx = self.fx.clamp(0.0, 1.0);
+        self.fy = self.fy.clamp(0.0, 1.0);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Pilot {
     pub id: String,
@@ -52,6 +95,11 @@ pub struct Pilot {
     /// `PilotRegistry::set_tag`, so any value found here is already valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    /// This character's own overlay position/width, if it has ever been
+    /// dragged in reposition mode. `None` means "use the default centered
+    /// placement", same absent-means-inherit convention as `tag`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<OverlayPlacement>,
 }
 
 impl Pilot {
@@ -77,7 +125,7 @@ fn cap_tag(s: &str) -> String {
     s.trim().chars().take(MAX_TAG_LEN).collect::<String>().to_uppercase()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Observation {
     /// First live sighting (also when a pilot known only from old logs starts running).
     NewLive(Pilot),
@@ -95,7 +143,7 @@ impl PilotRegistry {
     pub fn observe(&mut self, id: &str, name: &str, live: bool, now: Stamp) -> Observation {
         match self.pilots.get_mut(id) {
             None => {
-                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None };
+                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None, placement: None };
                 self.pilots.insert(id.to_string(), p.clone());
                 if live {
                     Observation::NewLive(p)
@@ -162,6 +210,15 @@ impl PilotRegistry {
     pub fn set_tag(&mut self, id: &str, tag: Option<&str>) {
         if let Some(p) = self.pilots.get_mut(id) {
             p.tag = tag.map(cap_tag).filter(|t| !t.is_empty());
+        }
+    }
+
+    /// Sets (or, given `None`, clears) this pilot's saved overlay
+    /// position/width, clamping the width first. A no-op for an unknown
+    /// pilot id.
+    pub fn set_placement(&mut self, id: &str, placement: Option<OverlayPlacement>) {
+        if let Some(p) = self.pilots.get_mut(id) {
+            p.placement = placement.map(OverlayPlacement::clamped);
         }
     }
 
@@ -300,6 +357,26 @@ mod tests {
     }
 
     #[test]
+    fn a_placement_can_be_set_cleared_and_is_clamped_to_the_readable_range() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Jarna", true, T);
+        assert_eq!(r.get("1").unwrap().placement, None);
+
+        r.set_placement("1", Some(OverlayPlacement { fx: 0.25, fy: 0.1, width: 5000.0 }));
+        let p = r.get("1").unwrap().placement.unwrap();
+        assert_eq!((p.fx, p.fy, p.width), (0.25, 0.1, MAX_OVERLAY_WIDTH));
+
+        r.set_placement("1", Some(OverlayPlacement { fx: -3.0, fy: 7.0, width: 1.0 }));
+        let p = r.get("1").unwrap().placement.unwrap();
+        assert_eq!((p.fx, p.fy, p.width), (0.0, 1.0, MIN_OVERLAY_WIDTH));
+
+        r.set_placement("1", None);
+        assert_eq!(r.get("1").unwrap().placement, None);
+        // An unknown pilot id is a no-op, not a panic.
+        r.set_placement("nobody", Some(OverlayPlacement { fx: 0.5, fy: 0.0, width: 400.0 }));
+    }
+
+    #[test]
     fn round_trips_through_disk_and_a_missing_file_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sub").join("pilots.json");
@@ -321,9 +398,11 @@ mod tests {
         std::fs::write(&path, r#"{"pilots":{"1":{"id":"1","name":"Jarna","live":true,"firstSeen":1}}}"#).unwrap();
         let r = PilotRegistry::load(&path).unwrap();
         assert!(r.get("1").unwrap().channels.is_empty());
-        // Same for `tag`, added later still: absent entirely, not null, and
-        // still falls back to a derived one correctly.
+        // Same for `tag` and `placement`, both added later still: absent
+        // entirely, not null, and `tag` still falls back to a derived one
+        // correctly.
         assert_eq!(r.get("1").unwrap().tag, None);
         assert_eq!(r.get("1").unwrap().display_tag(), "J");
+        assert_eq!(r.get("1").unwrap().placement, None);
     }
 }

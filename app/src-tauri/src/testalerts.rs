@@ -40,6 +40,7 @@ fn alert(app: &AppHandle, pilot: &str, style: OverlayStyle, i: usize) -> Overlay
         tone,
         lifetime_ms: lifetime_ms(style),
         count: 1,
+        stack_up: false,
     }
 }
 
@@ -52,7 +53,12 @@ fn pilot_name(app: &AppHandle) -> String {
 fn on_every_monitor(app: &AppHandle, style: OverlayStyle, i: usize) {
     let pilot = pilot_name(app);
     for m in monitor_rects(app) {
-        app.state::<AppState>().overlays.show(app, m, m, alert(app, &pilot, style, i));
+        // A distinct key per monitor, not the real per-pilot key: this sends
+        // the "same" synthetic alert to every monitor's own window at once,
+        // which a real per-pilot key (one window total) could not do.
+        let key = format!("test-{}-{}", m.left, m.top);
+        let p = crate::overlay::Placement { monitor: m, region: m, width: crate::overlay::DEFAULT_OVERLAY_WIDTH, custom_pos: None, owner: None };
+        app.state::<AppState>().overlays.show(app, &key, p, alert(app, &pilot, style, i));
     }
 }
 

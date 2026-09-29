@@ -103,6 +103,15 @@ export function relativeTime(unixSeconds: number): string {
   return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 
+/** This character's saved overlay position/width, set by dragging it in reposition mode (Ctrl+Alt+O in-game). */
+export interface OverlayPlacement {
+  monitorLeft: number;
+  monitorTop: number;
+  x: number;
+  y: number;
+  width: number;
+}
+
 export interface Pilot {
   id: string;
   name: string;
@@ -111,6 +120,8 @@ export interface Pilot {
   channels: Record<string, KnownChannel>;
   /** This character's own Strip-badge tag, if it has set one; absent means "derive one from the name". */
   tag?: string;
+  /** Absent means "use the default centered placement". */
+  placement?: OverlayPlacement;
 }
 
 export interface SettingsData {

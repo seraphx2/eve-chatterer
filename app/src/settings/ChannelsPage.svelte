@@ -20,6 +20,18 @@
   let removeDialogOpen = $state(false);
   let removeTargetId = $state("");
   let removeTargetName = $state("");
+  let placementError = $state("");
+
+  async function resetPlacement() {
+    if (!pilot) return;
+    try {
+      await invoke("clear_pilot_placement", { pilotId: pilot.id });
+      placementError = "";
+      pilot.placement = undefined;
+    } catch (e) {
+      placementError = String(e);
+    }
+  }
 
   // Its own tiny debounced autosave, separate from the rest of the page:
   // this is a Pilot-registry field (pilots.json), not a layered Settings one,
@@ -92,6 +104,16 @@
       derived from the name: {deriveTag(pilot.name)}.
     </p>
     {#if tagError}<p class="section-note" style="color:var(--danger)">{tagError}</p>{/if}
+    <p class="section-note">
+      Overlay position: {#if pilot.placement}custom ({Math.round(pilot.placement.width)}px wide) <button
+          type="button"
+          class="revert"
+          onclick={resetPlacement}>↺ reset to default</button
+        >{:else}
+        default (centered on whichever screen the alert should draw attention to){/if}. Press <b>Ctrl+Alt+O</b> in game to drag and resize
+      it.
+    </p>
+    {#if placementError}<p class="section-note" style="color:var(--danger)">{placementError}</p>{/if}
   {/if}
 {/if}
 

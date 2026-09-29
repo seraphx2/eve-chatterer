@@ -28,6 +28,10 @@
 - The overlay manager must honor `Outcome::Limited(Fold)` by incrementing the count badge of the alert that is already showing.
 - Expose `Suppression` (`FocusedOnly`/`VisibleOnScreen`/`AllowAll`, `core/src/prefs.rs`) per channel/character in `ChannelRow.svelte` — the core and `Layer.suppression` already support it, but the settings screen has no control for it yet. Needed for "I absolutely can't miss this even on my own focused character" (owner, 2026-09-27): set that pilot/channel to `AllowAll` to stop the default focused-pilot suppression from applying to it.
 
+## Overlay reposition (see DESIGN.md "Overlay reposition & resize")
+- The reposition hotkey (Ctrl+Alt+O) is fixed; make it configurable.
+- A saved position's vertical fraction is measured against the fixed `BOX_H`; alert stacks are placed from the same reference, so a box whose measured height differs lands a few pixels off. Harmless so far.
+
 ## Linux support (unresearched, general knowledge only — not measured like the Windows findings)
 - `paths.rs`'s Linux fallback (`$HOME/Documents`) is wrong for the real case: EVE has no native Linux client, so logs live inside a Wine/Proton prefix (e.g. `~/.local/share/Steam/steamapps/compatdata/<appid>/pfx/drive_c/users/steamuser/Documents/EVE/logs/Chatlogs`). Needs a real fix (search known compatdata paths, or ask the user) before Linux support means anything.
 - Presence/focus tracking: plausible on X11 via EWMH properties (same idea as the Windows implementation); no standard, portable way on Wayland for an unprivileged app to query the focused window — wlroots compositors (Sway, Hyprland) expose a protocol for it, GNOME/KDE largely don't. Directly affects focus-based suppression.
