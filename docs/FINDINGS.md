@@ -116,6 +116,37 @@ Two real bugs found this way, both fixed same day:
 
 Alliance itself was never observed directly (the owner is not in an alliance); its channel id (`alliance`) was confirmed separately from a third party's real log header (docs/FINDINGS.md #3), and its settings defaults are kept identical to Corp by a standing rule (docs/DESIGN.md), so its correctness rests on Corp's proven code path plus that one header confirmation, not on a live alert.
 
+## 11. What `SHQueryUserNotificationState` sees (2026-09-29, Windows 11, `tools` bin `notifstate`)
+
+Polled every 250 ms while the owner toggled each control on and off, several seconds apart:
+
+| Toggled | Reported |
+|---|---|
+| Do Not Disturb (notification panel bell) | stayed 5 `ACCEPTS_NOTIFICATIONS` |
+| Focus session (notification panel) | stayed 5 `ACCEPTS_NOTIFICATIONS` |
+| EVE switched to Fullscreen | 2 `BUSY` for the ~8 s it was fullscreen, then back to 5 |
+
+So this API (the app's `notifications_ok`) does **not** reflect Windows 11 Do Not Disturb or Focus. It does see a full-screen app, EVE included. Anything that must honor DND/Focus needs another source; this one alone would show a custom popup straight through DND.
+
+Second run, same probe with WinRT `Windows.UI.Shell.FocusSessionManager` added (supported on the owner's Windows 11):
+
+| Toggled | `IsFocusActive` |
+|---|---|
+| Focus session started, then stopped | ACTIVE for the session, then off |
+| Do Not Disturb alone, on ~5 s then off | stayed off |
+
+`FocusSessionManager` sees Focus sessions but **not** the plain Do Not Disturb bell, even though a Focus session itself turns DND on. Between the two documented sources, a manually switched-on DND is invisible to the app. (An earlier DND-then-Focus run looked like one continuous 10 s ACTIVE span; the DND-only rerun showed that span was the Focus session alone.)
+
+## 12. Rich Windows notifications from an unpackaged build (2026-09-29, `tools` bin `toastprobe`)
+
+Sent straight through WinRT (`ToastNotificationManager::CreateToastNotifierWithId`), not the Tauri plugin, from a plain `target\debug` exe, after registering an app identity under `HKCU\Software\Classes\AppUserModelId\<id>` (`DisplayName`, `IconUri`):
+- The `appLogoOverride` image (a local PNG via `file:///`) showed; the owner confirmed. So did the `placement="attribution"` line.
+- Clicking a `foreground` button raised `Activated` in the running process about 1 s after showing, with the button's `arguments` (`switch=Jarna`).
+- Unclicked, it went to the notification center after ~6 s (`Dismissed: TimedOut`).
+- `Setting()` failed with "Element not found" on the first run just after registering the identity, and read `Enabled` on the next run.
+
+Limit: `Activated` reaches only the process that sent the notification while it is running. A click after the app has quit does nothing unless the app is also registered as a COM activator for Windows to launch; not built or tested.
+
 ## Corrections log (things believed early that were wrong)
 
 - "EVE's GPU rose by about 18 points while overlays animated" (first GPU run, 54% to 72%): not supported. The A/B runs showed EVE's own load varies by more than that with no overlay; the consistent effect is on dwm.exe and it comes from continuous animation.
@@ -125,6 +156,7 @@ Alliance itself was never observed directly (the owner is not in an alliance); i
 - "OneDrive is the cause": wrong, plain NTFS behaves the same (OneDrive is slightly better).
 - "Psianna is in exclusive Fullscreen" (from minimize behavior): wrong; the owner had switched her to Windowed to test minimizing.
 - "Her Local file had no writes while the probe ran": wrong; the probe had not adopted the file (mtime-based scan missed it).
+- "A toast that can't display (quiet time, DND) is detected and falls back to an overlay" (DESIGN.md delivery table): only partly; the check used (`SHQueryUserNotificationState`) does not see Windows 11 Do Not Disturb or Focus (#11), so during DND a toast is sent and Windows files it silently instead.
 - The old app's repo looked unlicensed (no root LICENSE): it is MIT (README and `EveChatNotifier/License.txt`).
 
 ## Untested (verify before relying on)
@@ -135,4 +167,4 @@ Alliance itself was never observed directly (the owner is not in an alliance); i
 - Localized (non-English) log headers.
 - Overlay rendering at different DPI scaling; overlay GPU/frame-time impact while EVE runs.
 - Release-build CPU and a long soak test.
-- Interactive Windows toast (WinRT, needs an app identity) from an installed build.
+- Interactive Windows toast from an installed (NSIS) build, and clicking one after the app has quit (#12 covered the running dev build only).
