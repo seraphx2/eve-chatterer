@@ -84,6 +84,22 @@ export interface Settings {
   kinds: Partial<Record<ChannelKind, Layer>>;
   channels: Record<string, Layer>;
   pilots: Record<string, PilotSettings>;
+  /** Which sound plays (core/src/audio.rs). Always present: Rust fills in its defaults. */
+  audio: AudioSettings;
+}
+
+export type AudioMode = "off" | "shared" | "per_character";
+
+export interface AudioSettings {
+  mode: AudioMode;
+  /** Absent means the built-in sound. */
+  sharedFile?: string;
+  /** By character id. */
+  pilotFiles?: Record<string, string>;
+  /** 0 to 100. */
+  volume: number;
+  /** Quiet time after a sound; mentions ignore it. */
+  cooldownSecs: number;
 }
 
 export interface KnownChannel {

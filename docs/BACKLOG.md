@@ -47,7 +47,6 @@
 - **Opt-in "archive old logs"** (off by default): move logs older than N days that have had no writes for a long time into an `Archive` subfolder, never delete, never touch anything in the live set, skip anything that cannot be opened. Not needed for performance (the live set makes cost independent of file count); housekeeping only.
 - Idle detection (`GetLastInputInfo`) to switch to persistent toast + sound when the user is away. The old app had an idle-detector module.
 - Optional spoken alerts (Windows speech synthesis).
-- Sound: a single playing sound at a time, click-to-dismiss (the old app's behavior) is a good baseline.
 - ESI name-to-id lookup was considered for pairing a window with a character id and rejected for now (network call, unnecessary since the log gives the pair).
 - Per-pilot accent colors and per-channel styles; live mini-feed/ticker of matched lines in a screen corner.
 - "Chat logging looks off" detection and toast.

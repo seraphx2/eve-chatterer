@@ -2,6 +2,7 @@
 //! overlays over the game. The always-on part is the Rust core (see
 //! `runner`); WebView2 windows (overlays, settings) exist only while needed.
 
+mod audio;
 mod badge;
 mod clientmoves;
 mod diag;
@@ -108,6 +109,29 @@ fn clear_pilot_placement(app: AppHandle, state: State<'_, AppState>, pilot_id: S
     engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
+/// The Audio page's play button: the given file (or the built-in sound for
+/// none) at the given volume, now, whatever the cooldown.
+#[tauri::command]
+async fn preview_sound(file: Option<String>, volume: u8) -> Result<(), String> {
+    let source = file.filter(|f| !f.trim().is_empty()).map_or(eve_chatterer_core::audio::Source::BuiltIn, eve_chatterer_core::audio::Source::File);
+    audio::preview(source, eve_chatterer_core::audio::gain_for(volume));
+    Ok(())
+}
+
+/// The Audio page's Browse button. None when the picker was cancelled.
+#[tauri::command]
+async fn pick_sound_file(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut picker = app.dialog().file().set_title("Choose a sound").add_filter("Sounds", &["wav", "mp3", "ogg", "flac"]);
+    if let Some(w) = app.get_webview_window("settings") {
+        picker = picker.set_parent(&w);
+    }
+    match picker.blocking_pick_file() {
+        None => Ok(None),
+        Some(p) => p.into_path().map(|p| Some(p.display().to_string())).map_err(|e| e.to_string()),
+    }
+}
+
 /// The overlay page calls this once it is listening for alerts.
 #[tauri::command]
 async fn overlay_ready(app: AppHandle, state: State<'_, AppState>, label: String) -> Result<(), String> {
@@ -199,6 +223,7 @@ pub fn run() {
                 })
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -211,7 +236,9 @@ pub fn run() {
             reposition_gesture_start,
             reposition_move,
             reposition_resize,
-            reposition_box_height
+            reposition_box_height,
+            preview_sound,
+            pick_sound_file
         ])
         .setup(|app| {
             let settings_i = MenuItem::with_id(app, "tray-settings", "Settings…", true, None::<&str>)?;
@@ -240,6 +267,7 @@ pub fn run() {
             }
 
             toast::init(app.handle());
+            audio::start();
             clientmoves::start(app.handle().clone());
             runner::spawn(app.handle().clone());
             if std::env::args().any(|a| a == "--selftest") {
@@ -247,6 +275,9 @@ pub fn run() {
             }
             if std::env::args().any(|a| a == "--toasttest") {
                 testalerts::toasttest(app.handle());
+            }
+            if std::env::args().any(|a| a == "--soundtest") {
+                testalerts::soundtest();
             }
             if std::env::args().any(|a| a == "--soak") {
                 testalerts::soak(app.handle());

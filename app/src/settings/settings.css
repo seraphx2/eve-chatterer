@@ -670,6 +670,59 @@ button.btn:disabled {
   align-items: center;
   gap: 10px;
 }
+.sound-list {
+  padding: 6px 18px;
+}
+.sound-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--edge);
+}
+.sound-row:last-of-type {
+  border-bottom: none;
+}
+.sound-who {
+  flex: 0 0 170px;
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sound-file {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sound-file.inherited {
+  color: var(--ink-dim);
+}
+.sound-value {
+  flex: 0 0 44px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  text-align: right;
+}
+input.volume {
+  flex: 1;
+  accent-color: var(--accent);
+}
+button.btn.play {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.muted {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.section-note.error {
+  color: var(--danger);
+}
 .file-row {
   display: flex;
   align-items: center;

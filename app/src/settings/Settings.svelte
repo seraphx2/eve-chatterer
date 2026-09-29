@@ -193,7 +193,7 @@
         {:else if page.kind === "pilot"}
           <ChannelsPage settings={data.settings} pilotId={currentPilotId} pilot={currentPilot} online={currentPilotId !== null && isOnline(currentPilotId)} {onedit} />
         {:else if page.kind === "audio"}
-          <AudioPage />
+          <AudioPage settings={data.settings} pilots={data.pilots} {onedit} />
         {:else if page.kind === "general"}
           <GeneralPage />
         {:else if page.kind === "about"}

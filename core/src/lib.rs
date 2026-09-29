@@ -1,6 +1,7 @@
 //! EVE chat notifier core: log tracking, layered settings, rules, presence and
 //! the alert router. No UI.
 
+pub mod audio;
 pub mod channel;
 pub mod engine;
 pub mod governor;

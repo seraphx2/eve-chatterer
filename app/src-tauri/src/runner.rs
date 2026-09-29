@@ -1,6 +1,7 @@
 //! Drives the core on a background thread: follow the logs, sample presence,
 //! route alerts and hand them to the overlay windows. Nothing here draws.
 
+use crate::audio;
 use crate::overlay;
 use crate::overlay::{Fold, OverlayAlert};
 use crate::state::{AppState, PilotView};
@@ -250,6 +251,7 @@ impl Runner {
                     println!("       {} ({:?}) -> {:?}", d.pilot_name, d.reason, d.outcome);
                     self.deliver(&a, d, snap);
                 }
+                self.sound(&decisions);
             }
             Event::NewPilot(p) => {
                 self.save_pilots();
@@ -268,6 +270,24 @@ impl Runner {
         let engine = guard.as_ref().expect("engine is set before run_loop starts");
         if let Err(e) = engine.pilots().save(&self.pilots_path) {
             eprintln!("could not save pilots.json: {e}");
+        }
+    }
+
+    /// One sound for one message, however many characters it alerted. A
+    /// mention decides the file (and cuts through the cooldown); otherwise
+    /// the first character that asked for a sound does.
+    fn sound(&self, decisions: &[Decision]) {
+        let wants = |d: &&Decision| matches!(&d.outcome, Outcome::Deliver(v) if v.contains(&Delivery::Sound));
+        let asking: Vec<&Decision> = decisions.iter().filter(wants).collect();
+        let Some(d) = asking.iter().find(|d| matches!(d.reason, Reason::OwnName)).or(asking.first()) else {
+            return;
+        };
+        let settings = {
+            let guard = self.engine.lock().unwrap();
+            guard.as_ref().expect("engine is set before run_loop starts").settings().settings().audio.clone()
+        };
+        if let Some(source) = settings.source_for(d.pilot_id.as_deref()) {
+            audio::alert(source, settings.gain(), settings.cooldown(), matches!(d.reason, Reason::OwnName));
         }
     }
 
@@ -330,7 +350,7 @@ impl Runner {
                             });
                             state.alerts_shown.fetch_add(1, Ordering::Relaxed);
                         }
-                        Delivery::Sound => {} // sound comes with the audio milestone
+                        Delivery::Sound => {} // once per alert, not per character: `sound`
                     }
                 }
             }

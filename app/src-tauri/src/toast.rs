@@ -66,12 +66,14 @@ fn attribution(t: &ChatToast, count: u32) -> String {
 /// notification's data, so a rate-cap fold can update the count on the
 /// notification already on screen instead of replacing it (replacing it
 /// pulled it off screen after about a second).
+/// Always silent: sound is the app's own (audio.rs), with its cooldown
+/// and the Audio page's choice, never Windows' notification sound on top.
 fn chat_xml(t: &ChatToast, logo: Option<&str>) -> String {
     let first = t.pilot.split_whitespace().next().unwrap_or(&t.pilot);
     let switch = xml_escape(&format!("switch={}", t.pilot));
     let image = logo.map(|p| format!(r#"<image placement="appLogoOverride" src="file:///{}"/>"#, xml_escape(&p.replace('\\', "/")))).unwrap_or_default();
     format!(
-        r#"<toast launch="{switch}" activationType="foreground"{presence}><visual><binding template="ToastGeneric"><text>{sender} in {channel}</text><text>{text}</text><text placement="attribution">{{attribution}}</text>{image}</binding></visual><actions><action content="Switch to {first}" arguments="{switch}" activationType="foreground"/><action content="Dismiss" arguments="dismiss" activationType="system"/></actions></toast>"#,
+        r#"<toast launch="{switch}" activationType="foreground"{presence}><visual><binding template="ToastGeneric"><text>{sender} in {channel}</text><text>{text}</text><text placement="attribution">{{attribution}}</text>{image}</binding></visual><actions><action content="Switch to {first}" arguments="{switch}" activationType="foreground"/><action content="Dismiss" arguments="dismiss" activationType="system"/></actions><audio silent="true"/></toast>"#,
         sender = xml_escape(&t.sender),
         channel = xml_escape(&t.channel),
         text = xml_escape(&t.text),
@@ -82,7 +84,7 @@ fn chat_xml(t: &ChatToast, logo: Option<&str>) -> String {
 
 fn plain_xml(title: &str, body: &str) -> String {
     format!(
-        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual><audio silent="true"/></toast>"#,
         xml_escape(title),
         xml_escape(body)
     )

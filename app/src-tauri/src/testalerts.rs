@@ -182,3 +182,30 @@ pub fn send(app: &AppHandle, kind: &str) {
         other => eprintln!("unknown test alert kind {other:?}"),
     }
 }
+
+/// Walks the sound rules with the built-in alert tone and a 10 s cooldown,
+/// printing what should be heard at each step: a sound, silence for the
+/// cooldown, a mention cutting through it, and one cutting off a sound.
+pub fn soundtest() {
+    use eve_chatterer_core::audio::Source;
+    std::thread::spawn(|| {
+        let cooldown = Duration::from_secs(10);
+        let steps: [(u64, bool, &str); 6] = [
+            (3, false, "chat: plays"),
+            (5, false, "chat 2 s later: silent (cooldown)"),
+            (7, true, "mention: plays through the cooldown"),
+            (9, false, "chat: silent (cooldown restarted by the mention)"),
+            (17_500, false, "chat 10.5 s after the mention: plays"),
+            (17_700, true, "mention 0.2 s into it: cuts it off and plays"),
+        ];
+        let start = std::time::Instant::now();
+        for (at, mention, what) in steps {
+            // Whole numbers are seconds; the last two are milliseconds.
+            let at = if at > 1000 { Duration::from_millis(at) } else { Duration::from_secs(at) };
+            std::thread::sleep(at.saturating_sub(start.elapsed()));
+            println!("[soundtest] {:>5.1}s  {what}", start.elapsed().as_secs_f32());
+            crate::audio::alert(Source::BuiltIn, 0.8, cooldown, mention);
+        }
+        println!("[soundtest] done");
+    });
+}

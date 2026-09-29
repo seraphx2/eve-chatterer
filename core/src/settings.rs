@@ -16,6 +16,7 @@
 //! Fleet and private channel ids change every time, so a channel-by-id layer
 //! is only consulted for kinds with stable ids.
 
+use crate::audio::AudioSettings;
 use crate::channel::ChannelKind;
 use crate::prefs::{DeliveryMode, LayerKey, Mode, OverCap, OverlayStyle, Prefs, RateCap, Suppression};
 use crate::rules::{CompiledRules, RuleSet, TrackedTerm};
@@ -136,6 +137,8 @@ pub struct Settings {
     pub channels: BTreeMap<String, Layer>,
     /// Keyed by character id.
     pub pilots: BTreeMap<String, PilotSettings>,
+    /// Which sound plays (the Audio page); app-wide, not layered.
+    pub audio: AudioSettings,
 }
 
 /// The fully resolved behavior for one (pilot, channel).
