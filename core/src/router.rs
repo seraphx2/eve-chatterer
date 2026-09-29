@@ -4,9 +4,9 @@
 //! `AlertTarget` (`prefs`). Suppression (docs/DESIGN.md, "When to alert"): by
 //! default an alert is suppressed only for the pilot whose client the user is
 //! looking at; every other pilot's alerts go through, and everything goes
-//! through when focus is on a non-EVE window. Delivery: overlay when the game
-//! is on screen, a native toast when it is not or the user is away, with
-//! fallbacks. Rate caps are applied afterwards by the `Governor`, which needs
+//! through when focus is on a non-EVE window. Delivery: overlay while an EVE
+//! client has focus, a native toast when none does, none is on screen, or the
+//! user is away, with fallbacks. Rate caps are applied afterwards by the `Governor`, which needs
 //! memory; this module is pure.
 
 use crate::engine::Alert;
@@ -189,7 +189,11 @@ fn deliveries(
 
     let mut out = match mode {
         DeliveryMode::Auto => {
-            if away || !snap.any_on_screen() {
+            // An overlay lives with its EVE client (owned window, not
+            // topmost), so while another app has focus it would land behind
+            // that app: use the notification area then too (owner,
+            // 2026-09-28). `focused` already ignores the alt-tab switcher.
+            if away || snap.focused.is_none() || !snap.any_on_screen() {
                 vec![toast_or_overlay()]
             } else {
                 vec![overlay()]
@@ -250,6 +254,14 @@ mod tests {
         alert_with(names.iter().map(|n| (*n, Reason::OwnName, Prefs::default())).collect())
     }
 
+    /// Own-name mentions with overlays forced (Overlay delivery mode), for
+    /// checking where an overlay lands when Auto would use the notification
+    /// area instead (nothing focused).
+    fn forced_overlay(names: &[&str]) -> Alert {
+        let p = || Prefs { delivery: DeliveryMode::Overlay, ..Prefs::default() };
+        alert_with(names.iter().map(|n| (*n, Reason::OwnName, p())).collect())
+    }
+
     fn two() -> Vec<ClientState> {
         vec![client("Jarna", 10, MON_L), client("Psianna", 20, MON_R)]
     }
@@ -302,6 +314,16 @@ mod tests {
     }
 
     #[test]
+    fn with_no_eve_client_focused_auto_uses_the_notification_area() {
+        // The user is in another app with the clients still visible behind
+        // it: an overlay (owned by its client, not topmost) would land behind
+        // that app, so Auto delivery uses the notification area instead.
+        let d = route(&alert(&["Jarna", "Psianna"]), &snap(two(), None), &RouterConfig::default());
+        assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![Delivery::Toast { switch_to: "Jarna".into() }]));
+        assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![Delivery::Toast { switch_to: "Psianna".into() }]));
+    }
+
+    #[test]
     fn being_away_overrides_suppression_and_uses_a_toast() {
         let mut s = snap(two(), Some("Jarna"));
         s.idle = Duration::from_secs(10 * 60);
@@ -333,7 +355,7 @@ mod tests {
     fn windowed_clients_get_a_following_overlay_and_borderless_ones_a_monitor_overlay() {
         let mut clients = two();
         clients[0].rect = Some(Rect { left: -1500, top: 100, right: -300, bottom: 900 }); // Windowed
-        let d = route(&alert(&["Jarna", "Psianna"]), &snap(clients, None), &RouterConfig::default());
+        let d = route(&forced_overlay(&["Jarna", "Psianna"]), &snap(clients, None), &RouterConfig::default());
         assert_eq!(only(&d, "Jarna"), Outcome::Deliver(vec![ov(Anchor::FollowWindow { hwnd: 10 })]));
         assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_R))]));
     }
@@ -354,13 +376,13 @@ mod tests {
     #[test]
     fn a_hidden_pilots_alert_still_borrows_a_visible_clients_screen_without_focus() {
         // Nobody is focused (say, the user alt-tabbed to a third, non-EVE
-        // app), but Jarna's windowed client is still sitting visibly on
-        // screen. That is strictly better to anchor to than Psianna's own,
+        // app), but Jarna's client is still sitting visibly on screen, and
+        // overlays are forced (Auto would use the notification area here). That is strictly better to anchor to than Psianna's own,
         // definitely-invisible last known spot.
         let mut clients = two();
         clients[1].minimized = true;
         clients[1].rect = None;
-        let d = route(&alert(&["Psianna"]), &snap(clients, None), &RouterConfig::default());
+        let d = route(&forced_overlay(&["Psianna"]), &snap(clients, None), &RouterConfig::default());
         assert_eq!(only(&d, "Psianna"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
     }
 
@@ -400,7 +422,7 @@ mod tests {
         // No client at all is known for this pilot, but Jarna's is visible;
         // same principle as a hidden pilot's alert - anchor to what the user
         // can actually see rather than nowhere in particular.
-        let d = route(&alert(&["Ghost"]), &snap(two(), None), &RouterConfig::default());
+        let d = route(&forced_overlay(&["Ghost"]), &snap(two(), None), &RouterConfig::default());
         assert_eq!(only(&d, "Ghost"), Outcome::Deliver(vec![ov(Anchor::Monitor(MON_L))]));
     }
 
@@ -428,7 +450,7 @@ mod tests {
 
     #[test]
     fn the_style_follows_why_the_alert_fired_unless_the_settings_force_one() {
-        let s = snap(two(), None);
+        let s = snap(two(), Some("Psianna"));
         let cfg = RouterConfig::default();
         let style = |r: Reason, p: Prefs| style_of(&route(&alert_with(vec![("Jarna", r, p)]), &s, &cfg));
         let d = Prefs::default;
@@ -446,7 +468,7 @@ mod tests {
     fn the_style_map_can_be_remapped() {
         let mut cfg = RouterConfig::default();
         cfg.styles.keyword = OverlayStyle::Strip;
-        let s = snap(two(), None);
+        let s = snap(two(), Some("Psianna"));
         let a = alert_with(vec![("Jarna", Reason::Keyword("k".into()), Prefs::default())]);
         assert_eq!(style_of(&route(&a, &s, &cfg)), OverlayStyle::Strip);
     }
