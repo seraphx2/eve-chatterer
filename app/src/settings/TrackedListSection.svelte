@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CHANNEL_KINDS, CHANNEL_KIND_LABEL, type ChannelKind, type Settings, type TrackedKind, type TrackedRule, baseLayerToEdit, peekBaseLayer, resolveBaseField } from "./model";
+  import { CHANNEL_KINDS, CHANNEL_KIND_LABEL, type ChannelKind, type Settings, type TrackedKind, type TrackedRule, baseLayerToEdit, peekBaseLayer } from "./model";
   import Dialog from "./Dialog.svelte";
 
   let {
@@ -12,12 +12,11 @@
     onedit: () => void;
   } = $props();
 
-  const resolvedTracked = $derived(resolveBaseField(settings, pilotId, "tracked", [] as TrackedRule[]));
-  const entries = $derived(resolvedTracked.value);
-
-  const ownLayer = $derived(peekBaseLayer(settings, pilotId));
-  const isOwn = $derived(ownLayer?.tracked !== undefined);
-  const showDeviation = $derived(pilotId !== null && isOwn);
+  // A character's entries add to Defaults' (core/src/settings.rs `resolve`),
+  // so each page lists and edits only its own layer's entries: Defaults'
+  // apply everywhere without being copied in, and there's nothing to
+  // override or revert.
+  const entries = $derived(peekBaseLayer(settings, pilotId)?.tracked ?? []);
 
   function scopeLabel(entry: TrackedRule): string {
     return entry.onlyIn && entry.onlyIn.length > 0 ? entry.onlyIn.map((k) => CHANNEL_KIND_LABEL[k]).join(", ") : "";
@@ -29,13 +28,7 @@
     return `${scope}\n${muted}`;
   }
 
-  function startOwnList() {
-    const layer = baseLayerToEdit(settings, pilotId);
-    if (layer.tracked === undefined) layer.tracked = [...resolvedTracked.value];
-  }
-
   function save(rule: TrackedRule, editIndex: number | null) {
-    if (!isOwn) startOwnList();
     const layer = baseLayerToEdit(settings, pilotId);
     const list = (layer.tracked ??= []);
     if (editIndex !== null) list[editIndex] = rule;
@@ -44,14 +37,8 @@
   }
 
   function removeAt(index: number) {
-    if (!isOwn) return; // nothing of its own to remove from; adding/editing first makes sense
     const layer = baseLayerToEdit(settings, pilotId);
     layer.tracked = (layer.tracked ?? []).filter((_, i) => i !== index);
-    onedit();
-  }
-
-  function revertAll() {
-    delete baseLayerToEdit(settings, pilotId).tracked;
     onedit();
   }
 
@@ -109,7 +96,6 @@
   let removeTargetText = $state("");
 
   function askToRemove(index: number, entry: TrackedRule) {
-    if (!isOwn) return;
     removeIndex = index;
     removeTargetText = entry.text;
     removeDialogOpen = true;
@@ -121,15 +107,14 @@
   Checked under every mode above, including "Nothing" by default — a muted channel can still show something you're watching for, unless
   that entry turns it off below. Applies everywhere unless scoped to specific channels.
   {#if pilotId !== null}
-    {#if isOwn}This character has its own list. <button type="button" class="revert" onclick={revertAll}>↺ use default</button
-      >{:else}Follows Defaults.{/if}
+    Everything tracked in Defaults applies here too; entries added here are on top of those, for this character only.
   {/if}
 </p>
 <section class="card">
   <div class="kind-row">
     <div class="kind-body" style="gap:14px; margin-top:0">
       {#each entries as entry, i (i)}
-        <span class="chip" class:own={showDeviation} class:regex-chip={entry.kind === "regex"} title={chipTitle(entry)}>
+        <span class="chip" class:regex-chip={entry.kind === "regex"} title={chipTitle(entry)}>
           <button type="button" class="chip-text" onclick={() => openEdit(i, entry)}>
             {#if entry.kind === "regex"}<span class="regex-delim">/</span>{/if}{entry.text}{#if entry.kind === "regex"}<span
                 class="regex-delim">/</span

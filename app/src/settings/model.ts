@@ -56,6 +56,8 @@ export interface Layer {
   systemSenders?: string[];
   ignoreSenders?: string[];
   alwaysSenders?: string[];
+  /** Names this layer puts back to normal, undoing an entry inherited from Defaults (sender lists merge by name). */
+  normalSenders?: string[];
   delivery?: DeliveryMode;
   suppression?: Suppression;
   style?: OverlayStyle;

@@ -88,10 +88,19 @@ pub struct Layer {
     pub ignore_system: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_senders: Option<Vec<String>>,
+    // The sender lists merge by name across layers (see `place_sender`): a
+    // more specific layer only decides the names it lists, and every other
+    // name keeps what a less specific layer said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore_senders: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub always_senders: Option<Vec<String>>,
+    /// Names this layer puts back to normal (neither always nor ignored),
+    /// undoing an entry inherited from a less specific layer; e.g. a
+    /// character that should hear someone Defaults ignores, without always
+    /// alerting on them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normal_senders: Option<Vec<String>>,
 
     // How to show it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -216,9 +225,14 @@ impl Settings {
             if let Some(v) = l.own_name {
                 rules.own_name = v;
             }
+            // Merged, not replaced (owner, 2026-09-29): a character's entries
+            // add to Defaults'. The same text and kind listed at both levels
+            // is one entry, and the character's copy (its scope and mute
+            // setting) wins.
             if matches!(key, LayerKey::Global | LayerKey::Pilot) {
-                if let Some(v) = &l.tracked {
-                    tracked_all = v.clone();
+                for rule in l.tracked.iter().flatten() {
+                    tracked_all.retain(|t| !(t.kind == rule.kind && t.text.eq_ignore_ascii_case(&rule.text)));
+                    tracked_all.push(rule.clone());
                 }
             }
             if let Some(v) = l.ignore_own_messages {
@@ -230,11 +244,12 @@ impl Settings {
             if let Some(v) = &l.system_senders {
                 rules.system_senders = v.clone();
             }
-            if let Some(v) = &l.ignore_senders {
-                rules.ignore_senders = v.clone();
-            }
-            if let Some(v) = &l.always_senders {
-                rules.always_senders = v.clone();
+            // Normal first, then always, then ignore: within one layer a name
+            // on several lists ends up ignored, same as in `rules` itself.
+            for (names, verdict) in [(&l.normal_senders, None), (&l.always_senders, Some(true)), (&l.ignore_senders, Some(false))] {
+                for name in names.iter().flatten() {
+                    place_sender(&mut rules, name, verdict);
+                }
             }
             if let Some(v) = l.delivery {
                 prefs.delivery = v;
@@ -297,6 +312,7 @@ impl Settings {
                 let mut loaded: Settings = serde_json::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 loaded.backfill_missing_kinds();
                 loaded.backfill_example_tracked();
+                loaded.drop_copies_of_defaults();
                 Ok(loaded)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Settings::with_defaults()),
@@ -327,6 +343,35 @@ impl Settings {
     fn backfill_example_tracked(&mut self) {
         if self.global.tracked.is_none() {
             self.global.tracked = Settings::with_defaults().global.tracked;
+        }
+    }
+
+    /// Tracked and sender lists used to be copied from Defaults into a
+    /// character the first time it was edited there, and then replaced
+    /// Defaults' for it; they merge now (2026-09-29). Those copies are
+    /// redundant under merging, and a copied sender entry would even pin the
+    /// name so a later change on Defaults never reached that character. So
+    /// drop a character's entries that exactly match Defaults'. Run on load;
+    /// harmless once there is nothing left to drop.
+    fn drop_copies_of_defaults(&mut self) {
+        let g_tracked = self.global.tracked.clone().unwrap_or_default();
+        let g_always = self.global.always_senders.clone().unwrap_or_default();
+        let g_ignore = self.global.ignore_senders.clone().unwrap_or_default();
+        let has = |list: &[String], n: &str| list.iter().any(|x| x.eq_ignore_ascii_case(n));
+        for p in self.pilots.values_mut() {
+            let base = &mut p.base;
+            if let Some(t) = base.tracked.as_mut() {
+                t.retain(|r| !g_tracked.contains(r));
+            }
+            if let Some(a) = base.always_senders.as_mut() {
+                a.retain(|n| !(has(&g_always, n) && !has(&g_ignore, n)));
+            }
+            if let Some(i) = base.ignore_senders.as_mut() {
+                i.retain(|n| !has(&g_ignore, n));
+            }
+            none_if_empty(&mut base.tracked);
+            none_if_empty(&mut base.always_senders);
+            none_if_empty(&mut base.ignore_senders);
         }
     }
 
@@ -377,10 +422,95 @@ impl SettingsBook {
     }
 }
 
+fn none_if_empty<T>(v: &mut Option<Vec<T>>) {
+    if v.as_ref().is_some_and(Vec::is_empty) {
+        *v = None;
+    }
+}
+
+/// Decides one sender name: always (`Some(true)`), ignored (`Some(false)`),
+/// or normal (`None`), replacing whatever a less specific layer said about
+/// that name only. Names are unique in EVE, and compared without case.
+fn place_sender(rules: &mut crate::rules::RuleSet, name: &str, verdict: Option<bool>) {
+    rules.always_senders.retain(|n| !n.eq_ignore_ascii_case(name));
+    rules.ignore_senders.retain(|n| !n.eq_ignore_ascii_case(name));
+    match verdict {
+        Some(true) => rules.always_senders.push(name.to_string()),
+        Some(false) => rules.ignore_senders.push(name.to_string()),
+        None => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::rules::{LineCtx, Reason};
+
+    #[test]
+    fn sender_lists_merge_by_name_and_the_character_decides_its_own_names() {
+        let mut s = Settings::default();
+        s.global.ignore_senders = Some(vec!["Spammer".into(), "Bob".into()]);
+        s.global.always_senders = Some(vec!["Boss".into()]);
+        let base = &mut s.pilots.entry("1".into()).or_default().base;
+        base.always_senders = Some(vec!["bob".into(), "Friend".into()]); // Bob: ignored by Defaults, always for this pilot
+        base.normal_senders = Some(vec!["boss".into()]); // Boss: always by Defaults, normal for this pilot
+
+        let one = |pilot: &str, sender: &str| sender_verdict(&s, pilot, sender);
+        assert_eq!(one("1", "Spammer"), "ignored", "untouched Defaults entries still apply");
+        assert_eq!(one("1", "Bob"), "always");
+        assert_eq!(one("1", "Friend"), "always");
+        assert_eq!(one("1", "Boss"), "normal");
+        // Another character just follows Defaults.
+        assert_eq!((one("2", "Bob"), one("2", "Boss")), ("ignored", "always"));
+
+        // A name added to Defaults later reaches a character with its own entries too.
+        s.global.ignore_senders.as_mut().unwrap().push("NewPest".into());
+        assert_eq!(sender_verdict(&s, "1", "NewPest"), "ignored");
+    }
+
+    #[test]
+    fn loading_drops_a_characters_old_copies_of_defaults_lists() {
+        let mut s = Settings::default();
+        s.global.tracked = tracked_kw(&["@all"]);
+        s.global.always_senders = Some(vec!["Boss".into()]);
+        s.global.ignore_senders = Some(vec!["Spammer".into()]);
+        let base = &mut s.pilots.entry("1".into()).or_default().base;
+        // A copy made by the old UI, plus the character's own additions.
+        base.tracked = Some([tracked_kw(&["@all"]).unwrap(), tracked_kw(&["mine"]).unwrap()].concat());
+        base.always_senders = Some(vec!["boss".into(), "Friend".into()]);
+        base.ignore_senders = Some(vec!["Spammer".into()]);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        s.save(&path).unwrap();
+        let back = Settings::load(&path).unwrap();
+        let b = &back.pilots["1"].base;
+        assert_eq!(b.tracked.as_ref().unwrap().iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["mine"]);
+        assert_eq!(b.always_senders.as_deref(), Some(&["Friend".to_string()][..]));
+        assert_eq!(b.ignore_senders, None, "an emptied list is removed, not left empty");
+    }
+
+    #[test]
+    fn within_one_layer_a_name_on_several_sender_lists_is_ignored() {
+        let mut s = Settings::default();
+        s.global.always_senders = Some(vec!["Bob".into()]);
+        s.global.ignore_senders = Some(vec!["Bob".into()]);
+        assert_eq!(sender_verdict(&s, "1", "Bob"), "ignored");
+    }
+
+    /// How lines from `sender` resolve: "always" (a plain line alerts as an
+    /// always-sender), "ignored" (not even a mention alerts), or "normal"
+    /// (only a mention alerts).
+    fn sender_verdict(s: &Settings, pilot: &str, sender: &str) -> &'static str {
+        let r = s.resolve(Some(pilot), ChannelKind::Local, "local");
+        let line = |text| r.rules.evaluate(&LineCtx { pilot_name: "Jarna", channel_name: "Local", sender, text });
+        match (line("nothing special"), line("hi Jarna")) {
+            (Some(Reason::AlwaysSender(_)), _) => "always",
+            (None, None) => "ignored",
+            (None, Some(Reason::OwnName)) => "normal",
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 
     fn tracked_kw(words: &[&str]) -> Option<Vec<TrackedRule>> {
         Some(words.iter().map(|w| TrackedRule { text: w.to_string(), kind: TrackedKind::Keyword, only_in: vec![], even_when_muted: true }).collect())
@@ -399,26 +529,34 @@ mod tests {
     }
 
     #[test]
-    fn a_pilots_own_tracked_list_replaces_defaults_entirely() {
+    fn a_pilots_own_tracked_list_adds_to_defaults() {
         // Tracked entries are base-only (Global -> Pilot base), not layered
         // per kind/channel like everything else here (owner decision
         // 2026-09-27: channel targeting moved onto the entry itself instead,
-        // see `TrackedRule`) — so a pilot's own list fully replaces
-        // Defaults', the same "most specific wins" rule as everywhere else,
-        // just with two levels instead of six.
+        // see `TrackedRule`). A pilot's entries add to Defaults' (owner,
+        // 2026-09-29: it was a full replace, so a term added to Defaults later
+        // never reached a pilot with a list of its own).
         let mut s = Settings::default();
         s.global.tracked = tracked_kw(&["g"]);
-        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "g p"), Some("g".into()));
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "g"), Some("g".into()));
 
         s.pilots.entry("1".into()).or_default().base.tracked = tracked_kw(&["p"]);
-        assert_eq!(hit(&s.resolve(Some("1"), ChannelKind::Corp, "corp"), "g p"), Some("p".into()), "the pilot's own list replaces Defaults', not merges with it");
-        // Another pilot is unaffected.
-        assert_eq!(hit(&s.resolve(Some("2"), ChannelKind::Corp, "corp"), "g p"), Some("g".into()));
+        let one = s.resolve(Some("1"), ChannelKind::Corp, "corp");
+        assert_eq!((hit(&one, "g"), hit(&one, "p")), (Some("g".into()), Some("p".into())), "both lists apply");
+        // Another pilot has only Defaults'.
+        assert_eq!(hit(&s.resolve(Some("2"), ChannelKind::Corp, "corp"), "p"), None);
+
+        // The same text at both levels is one entry, and the pilot's copy
+        // wins: here its scope keeps it to Local.
+        s.global.tracked = tracked_kw(&["x"]);
+        s.pilots.get_mut("1").unwrap().base.tracked = tracked_kw_scoped("X", &[ChannelKind::Local]);
+        assert_eq!(hit(&s.resolve(Some("1"), ChannelKind::Corp, "corp"), "x"), None, "the pilot's scope applies");
+        assert_eq!(hit(&s.resolve(Some("1"), ChannelKind::Local, "local"), "x"), Some("X".into()));
 
         // A kind or channel layer's tracked list, if one were ever set by
         // hand-edited JSON, has no effect - only Global/pilot base are read.
         s.kinds.insert(ChannelKind::Corp, Layer { tracked: tracked_kw(&["k"]), ..Layer::default() });
-        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "g k"), Some("g".into()), "a kind-layer tracked list is ignored");
+        assert_eq!(hit(&s.resolve(None, ChannelKind::Corp, "corp"), "k"), None, "a kind-layer tracked list is ignored");
     }
 
     #[test]
