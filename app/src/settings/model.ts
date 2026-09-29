@@ -127,6 +127,8 @@ export interface Pilot {
 export interface SettingsData {
   settings: Settings;
   pilots: Pilot[];
+  /** Ids of characters with an EVE client running right now. (`Pilot.live` only means "has ever played".) */
+  online: string[];
 }
 
 const MAX_TAG_LEN = 5;

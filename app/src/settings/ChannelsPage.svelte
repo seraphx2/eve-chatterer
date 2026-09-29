@@ -6,7 +6,13 @@
   import SenderListSection from "./SenderListSection.svelte";
   import Dialog from "./Dialog.svelte";
 
-  let { settings, pilotId, pilot, onedit }: { settings: Settings; pilotId: string | null; pilot?: Pilot; onedit: () => void } = $props();
+  let {
+    settings,
+    pilotId,
+    pilot,
+    online = false,
+    onedit,
+  }: { settings: Settings; pilotId: string | null; pilot?: Pilot; online?: boolean; onedit: () => void } = $props();
 
   const knownChannels = $derived(
     pilot
@@ -80,7 +86,9 @@
 {:else}
   <div class="pilot-head">
     <h1 style="margin:0">{pilot?.name ?? pilotId}</h1>
-    {#if pilot}<span class="badge {pilot.live ? 'live' : 'logs'}">{pilot.live ? "Online" : "Seen in logs"}</span>{/if}
+    <!-- Online = a client is running now. `live` only means "has ever played",
+         which is what tells Offline apart from a character only ever seen in old logs. -->
+    {#if pilot}<span class="badge {online ? 'live' : 'logs'}">{online ? "Online" : pilot.live ? "Offline" : "Seen in logs"}</span>{/if}
   </div>
   <p class="pilot-id">Character ID {pilotId}</p>
   <p class="lede">

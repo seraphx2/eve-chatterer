@@ -37,6 +37,10 @@ pub struct Status {
 pub struct SettingsData {
     pub settings: Settings,
     pub pilots: Vec<Pilot>,
+    /// Ids of the characters with an EVE client running right now (from the
+    /// latest presence sample). `Pilot::live` only means "has ever played",
+    /// which is not the same thing and was shown as "Online" by mistake.
+    pub online: Vec<String>,
 }
 
 pub struct AppState {

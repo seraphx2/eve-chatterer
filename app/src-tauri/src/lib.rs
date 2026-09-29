@@ -39,7 +39,14 @@ fn get_status(state: State<'_, AppState>) -> Status {
 fn get_settings_data(state: State<'_, AppState>) -> Result<SettingsData, String> {
     let guard = state.engine.lock().unwrap();
     let engine = guard.as_ref().ok_or("Still starting up — try again in a moment.")?;
-    Ok(SettingsData { settings: engine.settings().settings().clone(), pilots: engine.pilots().iter().cloned().collect() })
+    let online = state
+        .last_snapshot
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|s| s.clients.iter().filter_map(|c| engine.pilots().by_name(&c.character).map(|p| p.id.clone())).collect())
+        .unwrap_or_default();
+    Ok(SettingsData { settings: engine.settings().settings().clone(), pilots: engine.pilots().iter().cloned().collect(), online })
 }
 
 /// Validates, persists to settings.json, and applies to the running engine

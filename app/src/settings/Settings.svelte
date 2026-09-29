@@ -99,9 +99,13 @@
     data
       ? [...data.pilots]
           .filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
-          .sort((a, b) => Number(b.live) - Number(a.live) || a.name.localeCompare(b.name))
+          .sort((a, b) => Number(isOnline(b.id)) - Number(isOnline(a.id)) || a.name.localeCompare(b.name))
       : [],
   );
+  const onlineIds = $derived(new Set(data?.online ?? []));
+  function isOnline(id: string) {
+    return onlineIds.has(id);
+  }
   // Narrowed once here (svelte-check doesn't reliably narrow a discriminated
   // union read back out of a template attribute expression).
   const currentPilotId = $derived(page.kind === "pilot" ? page.id : null);
@@ -157,7 +161,7 @@
           {#each sortedPilots as p (p.id)}
             <button type="button" class="row" class:active={currentPilotId === p.id} style="width:100%;text-align:left" onclick={() => (page = { kind: "pilot", id: p.id })}>
               <span class="caret"></span>
-              <span class="dot {p.live ? 'on' : 'off'}"></span>
+              <span class="dot {isOnline(p.id) ? 'on' : 'off'}" title={isOnline(p.id) ? "Online now" : "Not running"}></span>
               <span class="label">{p.name}</span>
               {#if !p.live}<span class="sub">logs only</span>{/if}
             </button>
@@ -187,7 +191,7 @@
         {:else if page.kind === "defaults"}
           <ChannelsPage settings={data.settings} pilotId={null} {onedit} />
         {:else if page.kind === "pilot"}
-          <ChannelsPage settings={data.settings} pilotId={currentPilotId} pilot={currentPilot} {onedit} />
+          <ChannelsPage settings={data.settings} pilotId={currentPilotId} pilot={currentPilot} online={currentPilotId !== null && isOnline(currentPilotId)} {onedit} />
         {:else if page.kind === "audio"}
           <AudioPage />
         {:else if page.kind === "general"}
