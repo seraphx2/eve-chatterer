@@ -1,0 +1,126 @@
+name: Release
+
+# Fires on every push to main (every dev->main merge) and publishes a release:
+# a CalVer version from today's date + existing tags, the Windows installer
+# (NSIS) with signed updater artifacts and latest.json, a portable zip, and a
+# GitHub Release with everything attached. Same flow as dev-prompt, Windows
+# only. Doc-only merges are skipped (paths-ignore); to opt a code merge out,
+# put "[skip release]" in the merge-commit message. workflow_dispatch stays
+# for manual drafts / prereleases / re-runs.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create as a draft (review, then publish by hand)"
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark as pre-release (the updater ignores it)"
+        type: boolean
+        default: false
+
+# One release at a time; never cancel a run that may have already published.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    # push: skip when the merge commit opts out. dispatch: always run.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.head_commit.message, '[skip release]')
+
+    steps:
+      - name: Guard — live dispatch only from main
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ] \
+            && [ "${{ inputs.draft }}" != "true" ] \
+            && [ "${{ inputs.prerelease }}" != "true" ]; then
+            echo "::error::Refusing a live release dispatched from '${{ github.ref_name }}'. Check 'draft' or 'prerelease', or dispatch from main."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # all tags, so the CalVer build segment is correct
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+
+      - name: Install dependencies
+        shell: bash
+        working-directory: app
+        run: npm ci
+
+      # The PR's `check` ran on the PR head, not the merge result. Re-run the
+      # Rust tests on the exact commit being shipped; `tauri build` below is a
+      # full compile anyway, so this costs little extra.
+      - name: Tests
+        shell: bash
+        run: cargo test --workspace
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: echo "value=$(node scripts/version.mjs)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tagName: v${{ steps.version.outputs.value }}
+          releaseName: EVE Chatterer v${{ steps.version.outputs.value }}
+          releaseBody: |
+            **Install:** download `EVE.Chatterer_${{ steps.version.outputs.value }}_x64-setup.exe` below and run it. It installs for your Windows user only (no admin needed), starts with Windows, and updates itself from then on.
+
+            **Portable:** or unzip `eve-chatterer_${{ steps.version.outputs.value }}_x64-portable.zip` anywhere and run it. The portable copy doesn't update itself.
+          releaseDraft: ${{ inputs.draft || false }}
+          prerelease: ${{ inputs.prerelease || false }}
+          uploadUpdaterJson: true
+
+      # The bare exe as a no-install option. It's the same build the installer
+      # contains, but the bundler's marker isn't in it, so it reports
+      # "unmanaged" and never runs the in-app updater (updates.rs).
+      - name: Package portable zip
+        shell: bash
+        run: |
+          cd target/release
+          7z a "eve-chatterer_${{ steps.version.outputs.value }}_x64-portable.zip" eve-chatterer-app.exe
+
+      - name: Attach portable zip to release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${{ steps.version.outputs.value }}" \
+            "target/release/eve-chatterer_${{ steps.version.outputs.value }}_x64-portable.zip" \
+            --clobber

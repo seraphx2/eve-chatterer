@@ -19,7 +19,9 @@
   "bundle": {
     "active": true,
     "license": "MIT",
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -29,7 +31,20 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/seraphx2/eve-chatterer/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3NjAwOTczNkVCMDBGODUKUldTRkQ3QnVjd2xnTjdIZ01YZ3hDS252cSs0eG1RL0VPaDFIRjhoU3BKSmRycWk1eTZMNXBWOVIK",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

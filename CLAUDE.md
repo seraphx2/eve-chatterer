@@ -20,4 +20,10 @@ A modern EVE Online chat-log notifier: Rust core + Tauri v2 + Svelte, in-game We
 
 - `tools/scripts/feed.ps1` synthetic two-character log feeder for live routing checks (writes only to a temp dir you give it): `pwsh tools/scripts/feed.ps1 -Dir <temp> -Seconds 150` alongside `chatter --dir <temp> --keyword chatterer-test`
 
-Tests: `cargo test -p eve-chatterer-core`. Run a probe: `cargo run -p eve-chatterer-tools --bin <name>` (Windows only for focus/overlay).
+Tests: `cargo test -p eve-chatterer-core` (or `cargo test --workspace`). CI also runs `cargo clippy --workspace --all-targets -- -D warnings`; keep it clean. Run a probe: `cargo run -p eve-chatterer-tools --bin <name>` (Windows only for focus/overlay).
+
+## Branches and releases (same flow as dev-prompt, Windows only)
+- Work on `dev` (the default branch). `main` is protected by the "Protect main" ruleset: pull requests only, the `check` job must pass, no force pushes or deletion.
+- `.github/workflows`: `ci.yml` (PR gate; frontend on Linux, Rust on **Windows** since most of the app is Windows-only), `ci-dev.yml` (every push to dev), `codeql.yml`, `release.yml` (every merge to main: CalVer `YYYY.MMDD.N` from `scripts/version.mjs`, signed NSIS installer + `latest.json` via tauri-action, plus a portable zip). `[skip release]` in the merge commit opts out.
+- Updater signing key: repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `_PASSWORD`; the public key is in `tauri.conf.json`. The owner holds the private key; losing it means installed copies can never update again.
+- `app/src-tauri/src/updates.rs` checks from Rust on a timer (the tray app usually has no window); only an installed copy updates itself (bundle marker **and** `uninstall.exe` beside the exe: the bundler patches the marker into `target/release`'s exe, which the portable zip ships). `installer-hooks.nsh`: Start Menu shortcut, start-at-login on fresh installs only, uninstall cleanup (Run entries, notification identity).

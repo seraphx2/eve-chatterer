@@ -1,0 +1,49 @@
+# Dependabot version updates, same shape as dev-prompt. Each ecosystem is
+# grouped, so a run opens at most one PR per ecosystem. PRs target `dev`, the
+# default branch, where CI (`ci-dev.yml`) runs. Majors are taken by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: "/app"
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev
+    groups:
+      npm:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: cargo
+    directory: "/"
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    groups:
+      cargo:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major

@@ -60,18 +60,20 @@ pub fn render(tag: &str, accent: Color, tone: Color, font: Option<&FontVec>) -> 
     let plate = rounded(Rect::from_xywh(0.0, 0.0, s, s)?, RADIUS)?;
 
     // Steel glass, as `.glass` in overlay.css.
-    let mut glass = Paint::default();
-    glass.anti_alias = true;
-    glass.shader = LinearGradient::new(
-        Point::from_xy(s * 0.35, 0.0),
-        Point::from_xy(s * 0.65, s),
-        vec![
-            GradientStop::new(0.0, Color::from_rgba8(70, 96, 110, 245)),
-            GradientStop::new(1.0, Color::from_rgba8(24, 43, 51, 250)),
-        ],
-        SpreadMode::Pad,
-        Transform::identity(),
-    )?;
+    let glass = Paint {
+        anti_alias: true,
+        shader: LinearGradient::new(
+            Point::from_xy(s * 0.35, 0.0),
+            Point::from_xy(s * 0.65, s),
+            vec![
+                GradientStop::new(0.0, Color::from_rgba8(70, 96, 110, 245)),
+                GradientStop::new(1.0, Color::from_rgba8(24, 43, 51, 250)),
+            ],
+            SpreadMode::Pad,
+            Transform::identity(),
+        )?,
+        ..Paint::default()
+    };
     pm.fill_path(&plate, &glass, FillRule::Winding, Transform::identity(), None);
 
     // Accent edge on the left, and the reason notch on top, both kept

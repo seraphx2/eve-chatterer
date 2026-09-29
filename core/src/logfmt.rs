@@ -71,7 +71,7 @@ pub fn parse_line(raw: &str) -> Option<ChatLine> {
 }
 
 pub fn decode_utf16le(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     String::from_utf16_lossy(&units)
 }
 
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn parses_chat_lines_with_bom_and_odd_text() {
-        let l = parse_line(&line("2026.09.27 01:37:31", "Rilakss", "Предложение гиперсети: Zirnitra*").trim_end().to_string()).unwrap();
+        let l = parse_line(line("2026.09.27 01:37:31", "Rilakss", "Предложение гиперсети: Zirnitra*").trim_end()).unwrap();
         assert_eq!(l.sender, "Rilakss");
         assert_eq!(l.text, "Предложение гиперсети: Zirnitra*");
         // A '>' or ']' inside the message must not confuse the split.

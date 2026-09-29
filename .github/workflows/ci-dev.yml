@@ -1,0 +1,31 @@
+name: CI (dev)
+
+# Per-commit coverage on the long-lived dev branch, so a break is pinned to the
+# commit that caused it instead of surfacing at PR time. Separate from the
+# `check` context so it never touches the dev->main gate. Skips doc-only pushes.
+on:
+  push:
+    branches: [dev]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+
+concurrency:
+  group: ci-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ci-frontend
+
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ci-rust

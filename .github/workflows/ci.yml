@@ -1,0 +1,35 @@
+name: CI
+
+# PR gate for both branches: dev->main (the release gate) and feature->dev.
+# The `check` job aggregates the others and is the required status check in
+# the "Protect main" ruleset: keep its name stable.
+on:
+  pull_request:
+    branches: [main, dev]
+
+# Newer commits on the PR branch supersede an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ci-frontend
+
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ci-rust
+
+  check:
+    needs: [frontend, rust]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "frontend + rust passed"
