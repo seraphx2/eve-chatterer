@@ -32,9 +32,23 @@ Releases are unsigned today (the README covers SmartScreen's "Run anyway"). The 
 - More annoyance controls: repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, minimum priority. The layer structure already allows adding fields.
 - Known public channels are only removed by hand (the Remove action, which refuses while the channel has its own settings). Add automatic cleanup: drop entries not seen live in N days that carry no settings of their own.
 
+## Away mode and webhooks: Discord and Slack (owner request 2026-09-29; build as one piece)
+
+**Why away matters:** today the app assumes you're watching whenever EVE is on screen. Stepped away (AFK mining, ratting, docked), two things go wrong: the focused character's alerts are suppressed entirely ("it can see its own chat"), and other characters' overlays vanish after seconds with no history. So a mention while you're away can be lost completely.
+
+- **Away detection:** no mouse or keyboard input for N minutes (`GetLastInputInfo`; the General page already shows the placeholder "Treat input idle for 5 minutes as away") means away. While away: nothing is suppressed for being focused, alerts go to Windows notifications instead of overlays (they wait in Action Center with Switch to), and sound can play. Any input ends it. `router::route` already takes an `away` input; nothing sets it yet (always false).
+- **Webhooks, Discord and Slack** (a couple of other EVE tools do Discord): while away, also post the alert to a Discord or Slack channel, so the phone app pings you. Both are "incoming webhooks": a secret URL taking a small JSON message. Only the message format (Discord embeds, Slack attachments/blocks) and rate limits differ.
+  - **Webhook manager:** one place (its own "Webhooks" Settings page) where you add webhooks by **name** plus URL, with a Send test button. The type is detected from the URL (`discord.com/api/webhooks/...` or `hooks.slack.com/services/...`); anything else is refused with a clear message. The names populate a dropdown used everywhere else, so one webhook is reused across characters and channels, and the dropdown doesn't care which service a name is.
+  - **Choosing where alerts go:** a "Webhook" dropdown (None or a named webhook) as a normal layered field: set it on Defaults, override per character, and per channel, like Style or Sound. Mentions are the obvious default to send; other channels opt in.
+  - **When:** only while away by default; possibly an "always" option.
+  - **Look:** shaped like our alerts on both services (Discord embed, Slack attachment with a colored edge): character name and accent color, "Sender in Channel", the message, the reason. One formatting function per service. Busy channels fold into one message with a count, which also keeps under the rate limits (Slack allows about 1 message/second per webhook).
+  - **The URL is a secret** (anyone with it can post): stored only in local settings, masked in the UI, never logged, never in the repo.
+  - **Later, same shape:** Microsoft Teams, and a generic JSON option for people's own tools.
+  - **Privacy:** this sends other players' chat off the PC. Clearly labeled opt-in; the README's "only talks to GitHub" statement must be updated. Some corps/alliances forbid relaying their chat outside the game, so the UI should make the per-channel choice deliberate.
+  - **Reliability:** retry on failure, respect both services' 429 rate-limit responses, never drop a mention silently.
+
 ## Features
 
-- Idle detection (`GetLastInputInfo`) to switch to notifications (and optionally sound) when the user is away. The General page already shows the placeholder option. The old app had an idle-detector module.
 - Optional spoken alerts (Windows speech synthesis).
 - A live mini-feed/ticker of matched lines in a screen corner.
 - Opt-in "archive old logs" (off by default): move logs older than N days with no writes for a long time into an `Archive` subfolder; never delete, never touch the live set, skip anything that can't be opened. Housekeeping only (the live set makes cost independent of file count).
