@@ -269,12 +269,13 @@ impl Engine {
         events.extend(updated.into_iter().map(|id| Event::PilotUpdated { id }));
     }
 
-    /// Evaluates the line for every character that saw it, each under its own
-    /// resolved settings for this channel.
+    /// Evaluates the line for every character it is due for (see
+    /// `MergedLine::evaluate_for`), each under its own resolved settings for
+    /// this channel.
     fn evaluate(&mut self, m: MergedLine) -> Option<Alert> {
         let kind = classify(&m.channel_id, &m.channel_name);
         let mut targets = vec![];
-        for l in &m.seen_by {
+        for l in &m.evaluate_for {
             let resolved = self.book.resolved(l.char_id.as_deref(), kind, &m.channel_id);
             let ctx = LineCtx { pilot_name: &l.name, channel_name: &m.channel_name, sender: &m.line.sender, text: &m.line.text };
             if let Some(reason) = resolved.rules.evaluate_mode(&ctx, resolved.mode) {
@@ -415,6 +416,44 @@ mod tests {
         assert_eq!(got[0].targets.len(), 1);
         assert_eq!(got[0].targets[0].pilot_name, "Holden");
         assert_eq!(got[0].seen_by.len(), 2, "the router needs this to know Naomi's screen showed it too");
+    }
+
+    #[test]
+    fn a_log_folder_that_appears_after_startup_is_followed() {
+        // A new player turns on "Log chat to file" after the app started.
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("Chatlogs");
+        let mut e = engine(&dir, Layer::default());
+        let t0 = Instant::now();
+        assert!(e.tick(t0).is_empty(), "no folder: nothing to report, no error");
+        std::fs::create_dir(&dir).unwrap();
+        let p = session(&dir, "Local", "1", "Holden");
+        e.tick(t0 + Duration::from_secs(1));
+        append(&p, &line("2026.09.26 10:00:05", "Bob", "Holden?"));
+        let ev = e.tick(t0 + Duration::from_secs(2));
+        assert_eq!(alerts(&ev).len(), 1, "{ev:?}");
+    }
+
+    #[test]
+    fn a_mention_in_a_copy_that_arrives_after_the_hold_still_alerts_its_character() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = session(dir.path(), "Local", "1", "Holden");
+        let b = session(dir.path(), "Local", "2", "Naomi Nagata");
+        let mut e = engine(dir.path(), Layer::default());
+        let t0 = Instant::now();
+        e.tick(t0);
+        // Holden's copy goes out after the hold with nothing for Holden in it.
+        append(&a, &line("2026.09.26 10:00:05", "Bob", "Naomi Nagata, dock up"));
+        e.tick(t0 + Duration::from_millis(500));
+        assert!(alerts(&e.tick(t0 + Duration::from_millis(1300))).is_empty());
+        // Naomi's client wrote its copy late.
+        append(&b, &line("2026.09.26 10:00:06", "Bob", "Naomi Nagata, dock up"));
+        let ev = e.tick(t0 + Duration::from_millis(1800));
+        let got = alerts(&ev);
+        assert_eq!(got.len(), 1, "{ev:?}");
+        assert_eq!(got[0].targets.len(), 1);
+        assert_eq!((got[0].targets[0].pilot_name.as_str(), &got[0].targets[0].reason), ("Naomi Nagata", &Reason::OwnName));
+        assert_eq!(got[0].seen_by.len(), 2);
     }
 
     #[test]

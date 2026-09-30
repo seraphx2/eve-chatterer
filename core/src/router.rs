@@ -95,7 +95,9 @@ pub enum Outcome {
     Suppressed(SuppressedBy),
     Deliver(Vec<Delivery>),
     /// Held back by a rate cap (set by the `Governor`, never by `route`).
-    Limited(OverCap),
+    /// `deliveries` is what it would have had, so a fold lands where the
+    /// alert would have been shown.
+    Limited { over: OverCap, deliveries: Vec<Delivery> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

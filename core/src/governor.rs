@@ -7,9 +7,14 @@
 //! count badge of the alert already showing, whichever the strictest exceeded
 //! cap asks for. Suppressed alerts never reach the governor: only alerts that
 //! would really be shown count.
+//!
+//! A mention of the character's own name is never capped and never counted
+//! (owner decision 2026-09-30): it's the one alert that must always get its
+//! Beacon, notification and sound, however busy the channel is.
 
 use crate::prefs::{LayerKey, OverCap, RateCap};
 use crate::router::{Decision, Outcome};
+use crate::rules::Reason;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -56,17 +61,23 @@ impl Governor {
         Verdict::Allow
     }
 
-    /// Runs delivered decisions through the caps. Suppressed decisions and
-    /// deliveries with nothing to show pass through untouched.
+    /// Runs delivered decisions through the caps. Suppressed decisions,
+    /// deliveries with nothing to show and own-name mentions pass through
+    /// untouched.
     pub fn apply(&mut self, decisions: Vec<Decision>, now: Instant) -> Vec<Decision> {
         decisions
             .into_iter()
             .map(|mut d| {
-                let shown = matches!(&d.outcome, Outcome::Deliver(v) if !v.is_empty());
-                if shown && !d.caps.is_empty() {
-                    let who = d.pilot_id.clone().unwrap_or_else(|| d.pilot_name.clone());
-                    if let Verdict::Limited(o) = self.admit(&who, &d.caps, now) {
-                        d.outcome = Outcome::Limited(o);
+                if d.caps.is_empty() || d.reason == Reason::OwnName {
+                    return d;
+                }
+                if let Outcome::Deliver(v) = &mut d.outcome {
+                    if !v.is_empty() {
+                        let who = d.pilot_id.clone().unwrap_or_else(|| d.pilot_name.clone());
+                        if let Verdict::Limited(over) = self.admit(&who, &d.caps, now) {
+                            let deliveries = std::mem::take(v);
+                            d.outcome = Outcome::Limited { over, deliveries };
+                        }
                     }
                 }
                 d
@@ -151,8 +162,12 @@ mod tests {
         assert_eq!(g.admit("1", &[(local(), cap(0, OverCap::Drop))], t0), Verdict::Limited(OverCap::Drop));
     }
 
-    fn decision(outcome: Outcome, caps: Vec<(LayerKey, RateCap)>) -> Decision {
-        Decision { pilot_name: "Holden".into(), pilot_id: Some("1".into()), reason: Reason::OwnName, outcome, caps }
+    fn decision(reason: Reason, outcome: Outcome, caps: Vec<(LayerKey, RateCap)>) -> Decision {
+        Decision { pilot_name: "Holden".into(), pilot_id: Some("1".into()), reason, outcome, caps }
+    }
+
+    fn keyword() -> Reason {
+        Reason::Keyword("jita".into())
     }
 
     #[test]
@@ -165,16 +180,38 @@ mod tests {
         // Suppressed and empty deliveries pass through and do not use the budget.
         let out = g.apply(
             vec![
-                decision(Outcome::Suppressed(SuppressedBy::FocusedPilot), caps()),
-                decision(Outcome::Deliver(vec![]), caps()),
-                decision(shown(), caps()),
-                decision(shown(), caps()),
+                decision(keyword(), Outcome::Suppressed(SuppressedBy::FocusedPilot), caps()),
+                decision(keyword(), Outcome::Deliver(vec![]), caps()),
+                decision(keyword(), shown(), caps()),
+                decision(keyword(), shown(), caps()),
             ],
             t0,
         );
         assert_eq!(out[0].outcome, Outcome::Suppressed(SuppressedBy::FocusedPilot));
         assert_eq!(out[1].outcome, Outcome::Deliver(vec![]));
         assert_eq!(out[2].outcome, shown(), "the first shown alert fits the cap of 1");
-        assert_eq!(out[3].outcome, Outcome::Limited(OverCap::Fold), "the second does not");
+        assert_eq!(
+            out[3].outcome,
+            Outcome::Limited { over: OverCap::Fold, deliveries: vec![Delivery::Sound] },
+            "the second does not, and keeps where it would have gone"
+        );
+    }
+
+    #[test]
+    fn a_mention_is_never_capped_and_never_uses_the_budget() {
+        let mut g = Governor::new();
+        let t0 = Instant::now();
+        let shown = || Outcome::Deliver(vec![Delivery::Sound]);
+        let caps = || vec![(local(), cap(1, OverCap::Drop))];
+        let out = g.apply(
+            vec![
+                decision(Reason::OwnName, shown(), caps()),
+                decision(Reason::OwnName, shown(), caps()),
+                decision(keyword(), shown(), caps()),
+                decision(Reason::OwnName, shown(), caps()),
+            ],
+            t0,
+        );
+        assert!(out.iter().all(|d| d.outcome == shown()), "{out:?}");
     }
 }

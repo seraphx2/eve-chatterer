@@ -6,6 +6,7 @@
 //! create its config and tell the user (docs/DESIGN.md, "Pilots").
 
 use crate::channel::ChannelKind;
+use crate::store;
 use crate::time::Stamp;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -278,24 +279,23 @@ impl PilotRegistry {
         }
     }
 
-    /// A missing file is an empty registry (first run).
+    /// Reads a registry strictly and changes nothing on disk (the CLI's
+    /// `--pilots`). A missing file is an empty registry (first run).
     pub fn load(path: &Path) -> io::Result<PilotRegistry> {
-        match std::fs::read_to_string(path) {
-            Ok(s) => serde_json::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(PilotRegistry::default()),
-            Err(e) => Err(e),
-        }
+        Ok(store::load(path)?.unwrap_or_default())
     }
 
-    /// Writes to a temporary file and renames it over the target, so a crash
-    /// mid-write cannot leave a truncated registry.
+    /// Reads the app's registry. One that can't be read is kept aside and the
+    /// backup (or an empty registry) used instead; the second value is then a
+    /// problem to tell the user about (`store::open`).
+    pub fn open(path: &Path) -> (PilotRegistry, Option<String>) {
+        let o = store::open(path);
+        (o.value.unwrap_or_default(), o.problem)
+    }
+
+    /// Never leaves a partial file behind (`store::save`).
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self).map_err(io::Error::other)?)?;
-        std::fs::rename(&tmp, path)
+        store::save(path, self)
     }
 }
 

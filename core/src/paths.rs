@@ -21,8 +21,13 @@ pub fn documents_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Documents"))
 }
 
-/// `<Documents>\EVE\logs\Chatlogs`, if it exists.
+/// Where EVE writes its chat logs, `<Documents>\EVE\logs\Chatlogs`, whether
+/// or not it exists yet (it appears once "Log chat to file" is on in EVE).
+pub fn chatlogs_path() -> Option<PathBuf> {
+    Some(documents_dir()?.join("EVE").join("logs").join("Chatlogs"))
+}
+
+/// `chatlogs_path()`, if it exists.
 pub fn chatlogs_dir() -> Option<PathBuf> {
-    let p = documents_dir()?.join("EVE").join("logs").join("Chatlogs");
-    p.is_dir().then_some(p)
+    chatlogs_path().filter(|p| p.is_dir())
 }

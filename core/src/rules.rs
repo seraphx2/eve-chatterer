@@ -102,15 +102,39 @@ fn lower(v: &[String]) -> Vec<String> {
     v.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect()
 }
 
+/// Compiles a tracked pattern exactly as matching uses it (case-insensitive).
+/// The one place that decides whether a pattern is valid: the settings
+/// screen checks new patterns through it too.
+pub fn compile_pattern(pattern: &str) -> Result<Regex, regex::Error> {
+    Regex::new(&format!("(?i){pattern}"))
+}
+
 impl CompiledRules {
+    /// Fails on the first pattern that doesn't compile.
     pub fn compile(r: &RuleSet) -> Result<CompiledRules, regex::Error> {
-        let regexes = r
-            .regexes
-            .iter()
-            .filter(|t| !t.text.trim().is_empty())
-            .map(|t| Regex::new(&format!("(?i){}", t.text)).map(|re| (t.text.clone(), re, t.even_when_muted)))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(CompiledRules {
+        let (rules, bad) = CompiledRules::compile_skipping_bad(r);
+        match bad.into_iter().next() {
+            Some((_, e)) => Err(e),
+            None => Ok(rules),
+        }
+    }
+
+    /// Compiles every pattern once, leaving out (and returning) the ones that
+    /// don't compile, so one bad entry never disables the rest.
+    pub fn compile_skipping_bad(r: &RuleSet) -> (CompiledRules, Vec<(String, regex::Error)>) {
+        let mut regexes = vec![];
+        let mut bad = vec![];
+        for t in r.regexes.iter().filter(|t| !t.text.trim().is_empty()) {
+            match compile_pattern(&t.text) {
+                Ok(re) => regexes.push((t.text.clone(), re, t.even_when_muted)),
+                Err(e) => bad.push((t.text.clone(), e)),
+            }
+        }
+        (CompiledRules::with_regexes(r, regexes), bad)
+    }
+
+    fn with_regexes(r: &RuleSet, regexes: Vec<(String, Regex, bool)>) -> CompiledRules {
+        CompiledRules {
             own_name: r.own_name,
             ignore_own: r.ignore_own_messages,
             ignore_system: r.ignore_system,
@@ -124,7 +148,7 @@ impl CompiledRules {
                 .map(|k| (k.text.trim().to_string(), k.text.trim().to_lowercase(), k.even_when_muted))
                 .collect(),
             regexes,
-        })
+        }
     }
 
     /// Lines that never alert whatever the mode: the pilot's own messages,
