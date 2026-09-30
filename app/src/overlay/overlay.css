@@ -239,12 +239,21 @@ b {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 12px;
   font-size: 13px;
   color: var(--ink-dim);
 }
 .beacon .top .why {
   color: var(--accent);
   font-weight: 500;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.beacon .top .where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .beacon .sender {
   font-size: 20px;

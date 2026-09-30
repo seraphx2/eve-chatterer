@@ -58,7 +58,11 @@ pub struct OverlayAlert {
     /// its name (`eve_chatterer_core::pilots::Pilot::display_tag`).
     pub tag: String,
     pub accent: String,
+    /// What the player sees (`runner::channel_label`).
     pub channel: String,
+    /// The log's channel id, for matching folds: labels can repeat (every
+    /// private conversation is "Private chat").
+    pub channel_id: String,
     pub sender: String,
     pub text: String,
     pub reason: String,
@@ -71,9 +75,10 @@ pub struct OverlayAlert {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct Fold {
     pub pilot: String,
-    pub channel: String,
+    pub channel_id: String,
 }
 
 /// Sent to a window entering reposition mode, so it can show a placeholder

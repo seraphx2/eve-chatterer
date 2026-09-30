@@ -18,7 +18,7 @@ Everything here was measured on the project owner's machine (Windows 11, two 192
 - Real EVE files: `probe --no-poll` got **0 events in 120 s** while chatting between two characters; with polling on, 10 lines in 30 s, all delivered within the same second.
 - So it is NTFS write caching (size changes are reported when the cache flushes), not OneDrive. Documented Win32 behavior for `FILE_NOTIFY_CHANGE_SIZE`. Independent confirmation: py-eve-chat-mon's README reports the same and polls; the old EveChatNotifier polls file sizes.
 - Consequence: poll the live set (~500 ms) by opening the file and reading from a saved offset. Events are at most a hint.
-- Open: `Create` events for new files are believed timely (py-eve-chat-mon says so) but our probe never exercised them.
+- `Create` events for new files are timely (measured 2026-09-30, `probe --no-poll`, OneDrive Documents): a character login (Local + Corp) and joining a new channel each produced a Create event in the same second as the filename's start time, with the header already readable (~600 bytes). Growth still needs polling; discovery of new files can rely on events (polling the directory remains the fallback).
 
 ## 2. Poll cost and scale (debug build, local disk)
 
@@ -82,6 +82,16 @@ Not exercised: alt-tab held longer than the 1.5 s grace with an alert firing dur
 
 - The resident cost is the Rust core (about 6 MB private). The WebView2 tree exists only while alerts show plus 45 s; two windows cost about what dev-prompt's single window does (about 230 MB private), so a second monitor does not double it. The exe is 8.2 MB.
 - CPU across the tree: about 25% of one core while alerts animate, about 1% with windows open and quiet.
+- One window versus two, with per-client overlays and real alerts (2026-09-30, release build, two clients, whole tree sampled every 2 s):
+
+  | State | Processes | Working set | Private | CPU (one core) |
+  |---|---|---|---|---|
+  | Idle, no overlay (fresh start / after a teardown) | 1 | 19 / 34 MB | 4 / 7 MB | ~0.7% |
+  | First window being built (cold WebView2) | 7 | ~340 MB | ~150 MB | 60-85% for 2-4 s |
+  | One window, alert showing then quiet | 7 | 360-370 MB | ~147 MB | 0-1.5% |
+  | Two windows, quiet | 7-8 | 420-494 MB | 194-227 MB | 0-1.5% (brief 10-15% on a new alert) |
+
+  The second window costs about 50-80 MB private and ~60-130 MB working set, a fraction of the first (which pays for the whole WebView2 browser/GPU process set). Idle CPU doesn't change with the window count. Teardown still returns the tree to one process ~45 s after the last alert.
 - Cold start (first alert of a session, WebView2 not running): first window built in 406 ms, page ready 496 ms after the alert asked for it; the second monitor's window (warm environment) 117 ms / 149 ms. Add the 240 ms arrival animation.
 - Overlay windows verified as `WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED`, 520 x 640 centered on each monitor; the focus probe saw zero foreground events from the app while overlays showed.
 
@@ -167,7 +177,6 @@ Tried `window_vibrancy::apply_acrylic` on the overlay windows (the crate dev-pro
 ## Untested (verify before relying on)
 
 - Fullscreen overlay on GPUs/drivers other than the owner's.
-- `Create` events for new session files.
 - OneDrive placeholder hydration when adopting old files.
 - Localized (non-English) log headers.
 - Overlay rendering at different DPI scaling; overlay GPU/frame-time impact while EVE runs.

@@ -6,6 +6,7 @@ use crate::overlay;
 use crate::overlay::{Fold, OverlayAlert};
 use crate::state::{AppState, PilotView};
 use eve_chatterer_core::engine::{Alert, Engine, EngineConfig, Event};
+use eve_chatterer_core::channel::ChannelKind;
 use eve_chatterer_core::governor::Governor;
 use eve_chatterer_core::paths;
 use eve_chatterer_core::pilots::{tag_from_name, PilotRegistry};
@@ -71,13 +72,24 @@ pub fn lifetime_ms(s: OverlayStyle) -> u32 {
     }
 }
 
+/// The channel as the player knows it. EVE names private conversation logs
+/// "Private Chat (N)", a name the game never shows (its window is titled
+/// with the other person, who is the alert's sender anyway).
+pub fn channel_label(kind: ChannelKind, name: &str) -> String {
+    match kind {
+        ChannelKind::Private => "Private chat".to_string(),
+        _ => name.to_string(),
+    }
+}
+
 /// Plain-language reason and the tone (color) it takes.
 pub fn reason_text(r: &Reason) -> (String, &'static str) {
     match r {
         Reason::OwnName => ("Mentioned you".to_string(), "mention"),
         Reason::Keyword(k) => (format!("Keyword: {k}"), "keyword"),
         Reason::Regex(_) => ("Matched a pattern".to_string(), "keyword"),
-        Reason::AlwaysChannel(c) => (format!("Always alert: {c}"), "always"),
+        // The channel is already shown beside the reason everywhere.
+        Reason::AlwaysChannel(_) => ("Every message".to_string(), "always"),
         Reason::AlwaysSender(s) => (format!("Always alert: {s}"), "always"),
     }
 }
@@ -239,7 +251,7 @@ impl Runner {
         match ev {
             Event::Alert(a) => {
                 println!(
-                    "ALERT  {} ({:?})  {}: {}   seen by: {}",
+                    "ALERT  {} ({:?})  {}: {}   for: {}",
                     a.channel_name,
                     a.kind,
                     a.line.sender,
@@ -321,7 +333,8 @@ impl Runner {
                                     pilot: d.pilot_name.clone(),
                                     tag: tag_for(&self.app, d.pilot_id.as_deref(), &d.pilot_name),
                                     accent: accent_for(&d.pilot_name),
-                                    channel: alert.channel_name.clone(),
+                                    channel: channel_label(alert.kind, &alert.channel_name),
+                                    channel_id: alert.channel_id.clone(),
                                     sender: alert.line.sender.clone(),
                                     text: alert.line.text.clone(),
                                     reason,
@@ -342,7 +355,7 @@ impl Runner {
                                 accent: accent_for(switch_to),
                                 tone,
                                 sender: alert.line.sender.clone(),
-                                channel: alert.channel_name.clone(),
+                                channel: channel_label(alert.kind, &alert.channel_name),
                                 text: alert.line.text.clone(),
                                 reason,
                                 style: style_name(*style),
@@ -355,7 +368,7 @@ impl Runner {
                 }
             }
             Outcome::Limited(OverCap::Fold) => {
-                state.overlays.fold(&self.app, Fold { pilot: d.pilot_name.clone(), channel: alert.channel_name.clone() });
+                state.overlays.fold(&self.app, Fold { pilot: d.pilot_name.clone(), channel_id: alert.channel_id.clone() });
                 // And the notification, if the recent alerts went there.
                 toast::fold(&toast::key_for(&d.pilot_name, &alert.channel_name, matches!(d.reason, Reason::OwnName)));
             }

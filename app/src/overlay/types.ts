@@ -11,6 +11,8 @@ export interface Alert {
   /** The pilot's accent color (CSS). */
   accent: string;
   channel: string;
+  /** The log's channel id; folds match on it since labels can repeat. */
+  channelId: string;
   sender: string;
   text: string;
   /** Plain-language reason, e.g. "Mentioned you". */
@@ -25,7 +27,7 @@ export interface Alert {
 
 export interface Fold {
   pilot: string;
-  channel: string;
+  channelId: string;
 }
 
 /** Mirrors `RepositionInfo` in src-tauri/src/overlay.rs. */

@@ -45,7 +45,7 @@
 
   /** A line past the pilot's rate cap: bump the count of the latest matching alert. */
   function fold(f: Fold) {
-    const target = [...alerts].filter((a) => a.pilot === f.pilot && a.channel === f.channel).sort((x, y) => y.id - x.id)[0];
+    const target = [...alerts].filter((a) => a.pilot === f.pilot && a.channelId === f.channelId).sort((x, y) => y.id - x.id)[0];
     if (target) target.count += 1;
   }
 
@@ -58,6 +58,7 @@
       tag: r.tag,
       accent: r.accent,
       channel: "Local",
+      channelId: "local",
       sender: "Example Pilot",
       text: "This is where alerts for this character will appear.",
       reason: "Preview",

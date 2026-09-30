@@ -22,7 +22,7 @@ fn alert(app: &AppHandle, pilot: &str, style: OverlayStyle, i: usize) -> Overlay
     let (reason, tone) = match style {
         OverlayStyle::Beacon => ("Mentioned you", "mention"),
         OverlayStyle::Panel => ("Keyword: fleet", "keyword"),
-        OverlayStyle::Strip => ("Always alert: Local", "always"),
+        OverlayStyle::Strip => ("Every message", "always"),
     };
     // A real registry lookup where possible, so the preview matches what the
     // pilot would actually see if it has its own tag set.
@@ -34,6 +34,7 @@ fn alert(app: &AppHandle, pilot: &str, style: OverlayStyle, i: usize) -> Overlay
         tag: tag_for(app, pilot_id.as_deref(), pilot),
         accent: accent_for(pilot),
         channel: "Local".to_string(),
+        channel_id: "local".to_string(),
         sender: sender.to_string(),
         text: text.to_string(),
         reason: reason.to_string(),
