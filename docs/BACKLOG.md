@@ -21,6 +21,18 @@ Releases are unsigned today (the README covers SmartScreen's "Run anyway"). The 
 - **Plan:** plumbing and extraction once, then ship English plus drafted Russian, German and Chinese; the rest follow as files.
 - Separate from reading non-English *logs* (Open questions below), which needs a real sample first.
 
+## Spoken alerts: Piper voices with a "ship computer" filter (owner request 2026-09-30)
+
+Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then filtered). Windows' built-in voices (David, Zira, Mark) work but sound robotic; the owner liked the filter's echo a lot and wants it paired with Piper's neural voices.
+
+- **Voice engine: Piper, downloaded on demand, never bundled.** When the user turns voices on, the app downloads the unmodified Piper release from Piper's own GitHub release, plus the chosen voice (about 60 MB each, from the rhasspy/piper-voices collection). Because users get Piper straight from its authors and we only run it as a separate program, our code stays MIT (owner decision 2026-09-30: stay MIT). Never compile Piper or espeak-ng into the app. Show where it comes from, and its license, in Settings.
+- **Licensing to verify before shipping:** the original rhasspy/piper (MIT) is archived and its successor (OHF-Voice/piper1-gpl) is GPL-3, partly because espeak-ng underneath is GPL. Decide which release to download. **Each voice has its own license** (some non-commercial only): offer only voices whose model card allows it, checked per voice, not from memory.
+- **Speed:** measured 0.6 s per short line starting Piper fresh each time (1.8 s for the first, loading the voice). Keep one Piper process running with the voice loaded and feed it lines (expected 0.1-0.3 s), stream its raw audio out instead of writing files, load the voice at startup so the first alert isn't the slow one, and play the channel-open chirp immediately to cover any delay.
+- **Filter (rodio), as in voicefx:** a radio band (high-pass ~380 Hz, low-pass ~3.2 kHz), a short two-note chirp before the voice, and two quiet close echoes (45 ms, 110 ms) for a hard metal room. Make the strength adjustable (off / subtle / full).
+- **What it says and when:** short and consistent, for example "Holden, mentioned in Local by Amos Burton" and optionally the message. It goes through the same audio player and rules as the alert sounds: volume, quiet time, one at a time, mentions cut through. Per channel it's another layered choice next to Sound: off, sound, or voice.
+- **Windows voices** stay available as a no-download fallback.
+- Candidate voices tried: Alan and Jenny (British), Amy and Lessac (American). Owner to pick favorites.
+
 ## Measurements still open
 
 - Overlay frame-time impact on EVE (FINDINGS #9 only has GPU utilization): needs a present-level capture such as PresentMon, with both clients in a static scene so EVE's own load does not swamp the effect. Also whether an idle open overlay window costs the compositor anything.
@@ -59,7 +71,6 @@ Releases are unsigned today (the README covers SmartScreen's "Run anyway"). The 
 
 ## Features
 
-- Optional spoken alerts (Windows speech synthesis).
 - A live mini-feed/ticker of matched lines in a screen corner.
 - Opt-in "archive old logs" (off by default): move logs older than N days with no writes for a long time into an `Archive` subfolder; never delete, never touch the live set, skip anything that can't be opened. Housekeeping only (the live set makes cost independent of file count).
 
