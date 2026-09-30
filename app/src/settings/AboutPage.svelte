@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { renderReleaseNotes } from "./releaseNotes";
 
   let { version }: { version: string } = $props();
 
@@ -54,6 +55,24 @@
     return new Date(secs * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   }
 
+  const notesHtml = $derived(status?.available && status.notes ? renderReleaseNotes(status.notes) : "");
+
+  // A link in the notes opens in the browser; followed here, it would
+  // replace this window's page.
+  let notesEl = $state<HTMLElement>();
+  $effect(() => {
+    const el = notesEl;
+    if (!el) return;
+    const open = (e: MouseEvent) => {
+      const href = (e.target as Element).closest("a[href]")?.getAttribute("href");
+      if (!href) return;
+      e.preventDefault();
+      invoke("open_link", { url: href }).catch(() => {});
+    };
+    el.addEventListener("click", open);
+    return () => el.removeEventListener("click", open);
+  });
+
   const message = $derived.by(() => {
     if (!status) return "…";
     if (status.mode !== "self") return "This copy doesn't update itself (the portable version, or a development build). New versions are on GitHub.";
@@ -91,7 +110,8 @@
       {/if}
     {/if}
   </div>
-  {#if status?.available && status.notes}
-    <div class="update-notes">{status.notes}</div>
+  {#if notesHtml}
+    <!-- Sanitized in renderReleaseNotes. -->
+    <div class="update-notes" bind:this={notesEl}>{@html notesHtml}</div>
   {/if}
 </section>

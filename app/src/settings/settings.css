@@ -812,11 +812,55 @@ button.btn.play {
 .update-status.error {
   color: var(--danger);
 }
+/* Rendered from the release's Markdown (releaseNotes.ts). */
 .update-notes {
   padding: 0 18px 14px;
   font-size: 12.5px;
+  line-height: 1.55;
   color: var(--ink-dim);
-  white-space: pre-wrap;
+}
+.update-notes > :first-child {
+  margin-top: 0;
+}
+.update-notes > :last-child {
+  margin-bottom: 0;
+}
+.update-notes p,
+.update-notes ul,
+.update-notes ol {
+  margin: 0 0 8px;
+}
+.update-notes ul,
+.update-notes ol {
+  padding-left: 20px;
+}
+.update-notes h1,
+.update-notes h2,
+.update-notes h3,
+.update-notes h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.update-notes strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.update-notes code {
+  font-family: "Consolas", "SFMono-Regular", ui-monospace, monospace;
+  font-size: 11.5px;
+  padding: 1px 4px;
+  background: #0c141a;
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+.update-notes a {
+  color: var(--accent);
+}
+.update-notes hr {
+  border: none;
+  border-top: 1px solid var(--edge);
+  margin: 10px 0;
 }
 
 /* save bar */

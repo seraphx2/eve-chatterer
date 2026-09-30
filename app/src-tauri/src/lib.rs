@@ -181,6 +181,33 @@ fn open_folder(which: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens a link from the release notes in the default browser. Web links
+/// only: the notes come from the network, and this must never start a
+/// program. Sync on purpose: it runs on the UI thread, where COM (which
+/// ShellExecute may need) is already set up.
+#[tauri::command]
+fn open_link(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") || url.chars().any(char::is_control) {
+        return Err("Only web links can be opened.".into());
+    }
+    open_in_browser(&url)
+}
+
+#[cfg(windows)]
+fn open_in_browser(url: &str) -> Result<(), String> {
+    use windows::core::{w, HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let r = unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(url), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
+    // Anything above 32 means it worked (ShellExecute's documented contract).
+    if r.0 as isize > 32 { Ok(()) } else { Err(format!("Couldn't open {url}.")) }
+}
+
+#[cfg(not(windows))]
+fn open_in_browser(url: &str) -> Result<(), String> {
+    Err(format!("Opening {url} isn't supported here."))
+}
+
 /// Update state for the About page (updates.rs).
 #[tauri::command]
 fn get_update_status() -> updates::UpdateStatus {
@@ -347,6 +374,7 @@ pub fn run() {
             open_folder,
             get_update_status,
             check_for_updates,
+            open_link,
             install_update,
             get_autostart,
             set_autostart,
