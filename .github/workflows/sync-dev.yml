@@ -1,0 +1,40 @@
+name: Sync dev
+
+# Every merge into main leaves a merge commit there that dev never gets, so the
+# next release PR says dev is out of date, and "Update branch" re-runs every
+# check on unchanged code. This moves dev up to main right after each push to
+# main (release merges and ones that skip the release alike). Fast-forward
+# only: if something new landed on dev in the meantime, dev is left alone and
+# the notice (harmless) stays until the next sync. A push made with the
+# workflow's own token starts no other workflows, so no checks re-run.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward dev to main
+        shell: bash
+        run: |
+          git fetch origin dev
+          if ! git merge-base --is-ancestor origin/dev "$GITHUB_SHA"; then
+            echo "::notice::dev has commits main doesn't; left as it is."
+          elif git push origin "$GITHUB_SHA:refs/heads/dev"; then
+            echo "dev is now at $GITHUB_SHA."
+          else
+            echo "::notice::dev changed while syncing; left as it is."
+          fi

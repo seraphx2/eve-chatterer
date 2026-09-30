@@ -77,10 +77,24 @@ jobs:
         working-directory: app
         run: npm ci
 
-      # The PR's `check` ran on the PR head, not the merge result. Re-run the
-      # Rust tests on the exact commit being shipped; `tauri build` below is a
-      # full compile anyway, so this costs little extra.
+      # The PR's `check` ran on the PR head, not the merge result. When the
+      # merge's files are exactly the PR head's (main brought nothing of its
+      # own, the usual case), those already passed and the tests are skipped.
+      # Otherwise, and on a manual dispatch, they run on the exact commit being
+      # shipped. `tauri build` below is a full compile either way.
+      - name: Check whether the merge changed anything
+        id: merged
+        shell: bash
+        run: |
+          if git rev-parse -q --verify 'HEAD^2' >/dev/null && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse 'HEAD^2^{tree}')" ]; then
+            echo "same=true" >> "$GITHUB_OUTPUT"
+            echo "The merge's files match the pull request's, which passed CI: skipping the tests."
+          else
+            echo "same=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Tests
+        if: steps.merged.outputs.same != 'true'
         shell: bash
         run: cargo test --workspace
 
