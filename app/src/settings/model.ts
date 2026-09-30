@@ -86,6 +86,13 @@ export interface Settings {
   pilots: Record<string, PilotSettings>;
   /** Which sound plays (core/src/audio.rs). Always present: Rust fills in its defaults. */
   audio: AudioSettings;
+  /** App-wide General page options (core/src/settings.rs `GeneralSettings`). */
+  general: GeneralSettings;
+}
+
+export interface GeneralSettings {
+  /** Toggles overlay reposition mode. Changed only through `set_reposition_hotkey`, which registers it first. */
+  repositionHotkey: string;
 }
 
 export type AudioMode = "off" | "shared" | "per_character";

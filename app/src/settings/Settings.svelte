@@ -195,7 +195,7 @@
         {:else if page.kind === "audio"}
           <AudioPage settings={data.settings} pilots={data.pilots} {onedit} />
         {:else if page.kind === "general"}
-          <GeneralPage />
+          <GeneralPage settings={data.settings} />
         {:else if page.kind === "about"}
           <AboutPage {version} />
         {/if}

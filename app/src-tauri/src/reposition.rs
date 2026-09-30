@@ -71,7 +71,7 @@ fn enter(app: &AppHandle) {
                     accent: crate::runner::accent_for(&p.name),
                     monitor,
                     region,
-                    pos: p.placement.map(|pl| (pl.fx, pl.fy)),
+                    pos: p.placement,
                     width: p.placement.map(|pl| pl.width).unwrap_or(DEFAULT_OVERLAY_WIDTH),
                     owner: Some(hwnd),
                 })

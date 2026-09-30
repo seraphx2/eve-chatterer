@@ -11,7 +11,7 @@
 //! exactly one window to drag per character.
 
 use crate::diag::diag;
-use eve_chatterer_core::pilots::{OverlayPlacement, MAX_OVERLAY_WIDTH, MIN_OVERLAY_WIDTH};
+use eve_chatterer_core::pilots::{Edge, OverlayPlacement, MAX_OVERLAY_WIDTH, MIN_OVERLAY_WIDTH};
 use eve_chatterer_core::presence::{Rect, Snapshot};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -129,7 +129,8 @@ pub struct Placement {
     pub monitor: Rect,
     pub region: Rect,
     pub width: f64,
-    pub custom_pos: Option<(f64, f64)>,
+    /// The character's saved spot (only `fx`, `fy` and `edge` are used here).
+    pub custom_pos: Option<OverlayPlacement>,
     pub owner: Option<isize>,
 }
 
@@ -146,7 +147,7 @@ pub struct RepositionTarget {
     /// The EVE client window (or its monitor, when fullscreen): the box can
     /// never leave it.
     pub region: Rect,
-    pub pos: Option<(f64, f64)>,
+    pub pos: Option<OverlayPlacement>,
     pub width: f64,
     pub owner: Option<isize>,
 }
@@ -188,6 +189,27 @@ impl Session {
 
     fn set_origin(&mut self, x: i32, y: i32) {
         self.frac = (fraction(x - self.region.left, self.region.width() - self.w), fraction(y - self.region.top, self.region.height() - self.ref_h()));
+    }
+
+    /// A box whose middle is in the lower half of the region: its alerts grow
+    /// upward from its bottom edge.
+    fn anchors_bottom(&self, y: i32, h: i32) -> bool {
+        y + h / 2 > self.region.top + self.region.height() / 2
+    }
+
+    /// What to save: the width, the old-style fractions, and the anchored edge
+    /// where the box actually is (see `OverlayPlacement::edge`).
+    fn placement(&self) -> OverlayPlacement {
+        let (_, y) = self.origin();
+        let bottom = self.anchors_bottom(y, self.box_h);
+        let edge_y = if bottom { y + self.box_h } else { y };
+        let h = self.region.height().max(1);
+        OverlayPlacement {
+            fx: self.frac.0,
+            fy: self.frac.1,
+            width: f64::from(self.w) / self.scale - MARGIN * 2.0,
+            edge: Some(Edge { bottom, y: (f64::from(edge_y - self.region.top) / f64::from(h)).clamp(0.0, 1.0) }),
+        }
     }
 }
 
@@ -387,21 +409,30 @@ impl Overlays {
                 }
             }
             let scale = scale_for(app, &t.monitor);
-            let s = Session {
+            let mut s = Session {
                 region: t.region,
                 scale,
-                frac: t.pos.unwrap_or((0.5, 0.0)),
+                frac: (0.5, 0.0),
                 w: (win_w_for(t.width) * scale).round() as i32,
                 box_h: (BOX_H * scale).round() as i32,
                 start: (0, 0, 0),
             };
+            if let Some(pos) = t.pos {
+                s.frac = (pos.fx, pos.fy);
+                // A saved anchored edge puts the box's top (or bottom) exactly there.
+                if let Some(e) = pos.edge {
+                    let (x, _) = s.origin();
+                    let edge_y = edge_to_y(&s.region, e);
+                    s.set_origin(x, if e.bottom { edge_y - s.box_h } else { edge_y });
+                }
+            }
             let mut slots = self.slots.lock().unwrap();
             let Some(slot) = slots.get_mut(&label) else { continue };
             adopt(slot, t.owner);
             let (x, y) = s.origin();
             let _ = slot.window.set_size(PhysicalSize::new(s.w as u32, s.box_h as u32));
             let _ = slot.window.set_position(PhysicalPosition::new(x, y));
-            let _ = slot.window.set_ignore_cursor_events(false);
+            platform::set_click_through(&slot.window, false);
             platform::show_without_activating(&slot.window);
             deliver(app, &label, slot, Msg::RepositionEnter(RepositionInfo { name: t.name, tag: t.tag, accent: t.accent }));
             self.sessions.lock().unwrap().insert(label, s);
@@ -456,7 +487,14 @@ impl Overlays {
         if box_h == s.box_h || box_h <= 0 {
             return;
         }
+        // A box in the lower half keeps its bottom edge where it is (that's
+        // the edge its alerts will grow up from); one in the top half keeps its top.
+        let (x, y) = s.origin();
+        let old_h = s.box_h;
         s.box_h = box_h;
+        if s.anchors_bottom(y, old_h) {
+            s.set_origin(x, y + old_h - box_h);
+        }
         let (x, y) = s.origin();
         let _ = slot.window.set_size(PhysicalSize::new(s.w as u32, s.box_h as u32));
         platform::move_to(&slot.window, x, y);
@@ -554,10 +592,10 @@ impl Overlays {
                 continue;
             };
             deliver(app, &label, slot, Msg::RepositionExit);
-            let _ = slot.window.set_ignore_cursor_events(true);
+            platform::set_click_through(&slot.window, true);
             slot.last_used = Instant::now();
             drop(slots);
-            out.push((key, Some(OverlayPlacement { fx: s.frac.0, fy: s.frac.1, width: f64::from(s.w) / s.scale - MARGIN * 2.0 })));
+            out.push((key, Some(s.placement())));
         }
         out
     }
@@ -649,6 +687,11 @@ fn box_origin(region: &Rect, (fx, fy): (f64, f64), w: i32, h: i32) -> (i32, i32)
     clamp_into(region, x, y, w, h)
 }
 
+/// The physical y of a saved anchored edge in `region`.
+fn edge_to_y(region: &Rect, e: Edge) -> i32 {
+    (region.top + (e.y * f64::from(region.height())).round() as i32).clamp(region.top, region.bottom)
+}
+
 /// Sizes and positions a window for real alerts, returning the scale it used
 /// and whether its alerts should stack upward (see `geometry`).
 fn place(app: &AppHandle, window: &WebviewWindow, p: &Placement) -> (f64, bool) {
@@ -670,11 +713,14 @@ fn geometry(p: &Placement, scale: f64) -> (i32, i32, i32, i32, bool) {
         Some(pos) => {
             let box_h = (BOX_H * scale).round() as i32;
             let top = (STACK_EDGE * scale).round() as i32;
-            let (bx, by) = box_origin(region, pos, w, box_h);
-            if pos.1 > 0.5 {
-                (bx, by + box_h + top - h, true)
-            } else {
-                (bx, by - top, false)
+            let (bx, by) = box_origin(region, (pos.fx, pos.fy), w, box_h);
+            match pos.edge {
+                // The stack's first alert starts exactly on the saved edge.
+                Some(e) if e.bottom => (bx, edge_to_y(region, e) + top - h, true),
+                Some(e) => (bx, edge_to_y(region, e) - top, false),
+                // Saved before edges existed: the box's top plus `BOX_H`.
+                None if pos.fy > 0.5 => (bx, by + box_h + top - h, true),
+                None => (bx, by - top, false),
             }
         }
         None => {
@@ -696,7 +742,7 @@ mod platform {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, ShowWindowAsync, SW_HIDE, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_NOTOPMOST,
         HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
     };
 
     fn hwnd(window: &WebviewWindow) -> Option<HWND> {
@@ -751,6 +797,22 @@ mod platform {
         }
     }
 
+    /// Turns click-through on or off by flipping only `WS_EX_TRANSPARENT`.
+    /// Not through Tauri's `set_ignore_cursor_events`: that rewrites the
+    /// whole extended style from its own records, dropping our
+    /// `WS_EX_NOACTIVATE`, and then `ShowWindow(SW_SHOW)`s the window. With
+    /// that gone, grabbing the reposition box activated it, EVE stopped being
+    /// the fullscreen foreground window, and Windows showed the taskbar.
+    pub fn set_click_through(window: &WebviewWindow, on: bool) {
+        let Some(h) = hwnd(window) else { return };
+        unsafe {
+            let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
+            let ex = if on { ex | WS_EX_TRANSPARENT.0 as isize } else { ex & !(WS_EX_TRANSPARENT.0 as isize) };
+            SetWindowLongPtrW(h, GWL_EXSTYLE, ex);
+            let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS);
+        }
+    }
+
     pub fn show_without_activating(window: &WebviewWindow) {
         if let Some(h) = hwnd(window) {
             unsafe {
@@ -792,6 +854,10 @@ mod platform {
     use tauri::WebviewWindow;
 
     pub fn never_activate(_: &WebviewWindow) {}
+
+    pub fn set_click_through(window: &WebviewWindow, on: bool) {
+        let _ = window.set_ignore_cursor_events(on);
+    }
 
     pub fn set_owner(_: &WebviewWindow, _: Option<isize>) {}
 
@@ -841,5 +907,44 @@ mod tests {
     #[test]
     fn key_from_label_round_trips_through_label_for_for_simple_keys() {
         assert_eq!(key_from_label(&label_for("id:42")), "id:42");
+    }
+
+    const REGION: Rect = Rect { left: 100, top: 50, right: 1700, bottom: 950 };
+
+    /// A reposition session with a box of this height placed at (x, y).
+    fn session_at(y: i32, box_h: i32) -> Session {
+        let mut s = Session { region: REGION, scale: 1.0, frac: (0.5, 0.0), w: 520, box_h, start: (0, 0, 0) };
+        s.set_origin(400, y);
+        s
+    }
+
+    /// Where the saved placement puts the edge the alert stack starts from.
+    fn alert_edge(p: OverlayPlacement) -> (i32, bool) {
+        let placement = Placement { monitor: REGION, region: REGION, width: 460.0, custom_pos: Some(p), owner: None };
+        let (_, y, _, h, up) = geometry(&placement, 1.0);
+        let pad = STACK_EDGE as i32;
+        (if up { y + h - pad } else { y + pad }, up)
+    }
+
+    #[test]
+    fn alerts_start_exactly_on_the_boxs_edge_whatever_its_height() {
+        for box_h in [120, 170, 240] {
+            // Top half: alerts grow down from the box's top edge.
+            let s = session_at(200, box_h);
+            assert_eq!(alert_edge(s.placement()), (200, false), "top, box {box_h}");
+            // Lower half: they grow up from its bottom edge. This is what the
+            // fixed BOX_H used to get wrong by (box_h - BOX_H).
+            let s = session_at(700, box_h);
+            assert_eq!(alert_edge(s.placement()), (700 + box_h, true), "bottom, box {box_h}");
+        }
+    }
+
+    #[test]
+    fn a_placement_saved_before_edges_still_places_the_old_way() {
+        let old = OverlayPlacement { fx: 0.5, fy: 0.9, width: 460.0, edge: None };
+        let (edge, up) = alert_edge(old);
+        assert!(up);
+        let box_top = REGION.top + (0.9 * f64::from(REGION.height() - BOX_H as i32)).round() as i32;
+        assert_eq!(edge, box_top + BOX_H as i32);
     }
 }

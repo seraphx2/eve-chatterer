@@ -139,6 +139,25 @@ pub struct Settings {
     pub pilots: BTreeMap<String, PilotSettings>,
     /// Which sound plays (the Audio page); app-wide, not layered.
     pub audio: AudioSettings,
+    /// App-wide options from the General page; not layered.
+    pub general: GeneralSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GeneralSettings {
+    /// The global hotkey that toggles overlay reposition mode, as an
+    /// accelerator string ("Ctrl+Alt+O"). Registered by the app at startup
+    /// and whenever it's changed.
+    pub reposition_hotkey: String,
+}
+
+pub const DEFAULT_REPOSITION_HOTKEY: &str = "Ctrl+Alt+O";
+
+impl Default for GeneralSettings {
+    fn default() -> Self {
+        GeneralSettings { reposition_hotkey: DEFAULT_REPOSITION_HOTKEY.to_string() }
+    }
 }
 
 /// The fully resolved behavior for one (pilot, channel).

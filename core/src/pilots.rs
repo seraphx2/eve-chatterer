@@ -60,6 +60,23 @@ pub struct OverlayPlacement {
     /// Logical pixels; always within `[MIN_OVERLAY_WIDTH, MAX_OVERLAY_WIDTH]`
     /// on write (see `PilotRegistry::set_placement`).
     pub width: f64,
+    /// Where the alert stack's anchored edge sits, saved since 2026-09-30.
+    /// Alerts in the top half grow down from the box's top edge; in the lower
+    /// half they grow up from its bottom edge. Saving that edge itself (not
+    /// the box's top plus a fixed reference height) puts alerts exactly where
+    /// the box was, however tall it measured. `None` (older saves) places by
+    /// `fy` as before, until the character is repositioned again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<Edge>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Edge {
+    /// The bottom edge is anchored (the stack grows upward); else the top.
+    pub bottom: bool,
+    /// The edge's height in the region, as a fraction: 0 top, 1 bottom.
+    pub y: f64,
 }
 
 fn centered() -> f64 {
@@ -71,6 +88,9 @@ impl OverlayPlacement {
         self.width = self.width.clamp(MIN_OVERLAY_WIDTH, MAX_OVERLAY_WIDTH);
         self.fx = self.fx.clamp(0.0, 1.0);
         self.fy = self.fy.clamp(0.0, 1.0);
+        if let Some(e) = self.edge.as_mut() {
+            e.y = e.y.clamp(0.0, 1.0);
+        }
         self
     }
 }
@@ -413,18 +433,18 @@ mod tests {
         r.observe("1", "Holden", true, T);
         assert_eq!(r.get("1").unwrap().placement, None);
 
-        r.set_placement("1", Some(OverlayPlacement { fx: 0.25, fy: 0.1, width: 5000.0 }));
+        r.set_placement("1", Some(OverlayPlacement { fx: 0.25, fy: 0.1, width: 5000.0, edge: None }));
         let p = r.get("1").unwrap().placement.unwrap();
         assert_eq!((p.fx, p.fy, p.width), (0.25, 0.1, MAX_OVERLAY_WIDTH));
 
-        r.set_placement("1", Some(OverlayPlacement { fx: -3.0, fy: 7.0, width: 1.0 }));
+        r.set_placement("1", Some(OverlayPlacement { fx: -3.0, fy: 7.0, width: 1.0, edge: None }));
         let p = r.get("1").unwrap().placement.unwrap();
         assert_eq!((p.fx, p.fy, p.width), (0.0, 1.0, MIN_OVERLAY_WIDTH));
 
         r.set_placement("1", None);
         assert_eq!(r.get("1").unwrap().placement, None);
         // An unknown pilot id is a no-op, not a panic.
-        r.set_placement("nobody", Some(OverlayPlacement { fx: 0.5, fy: 0.0, width: 400.0 }));
+        r.set_placement("nobody", Some(OverlayPlacement { fx: 0.5, fy: 0.0, width: 400.0, edge: None }));
     }
 
     #[test]

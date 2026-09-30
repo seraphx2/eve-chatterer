@@ -53,8 +53,6 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
 ## Overlays
 
 - Optional frosted glass through Windows acrylic on the overlay window; check its GPU cost over EVE first.
-- The reposition hotkey (Ctrl+Alt+O) is fixed; make it configurable.
-- A saved position's vertical fraction is measured against the fixed `BOX_H`; alert stacks are placed from the same reference, so a box whose measured height differs lands a few pixels off. Harmless so far.
 
 ## Settings
 

@@ -126,7 +126,7 @@
           class="revert"
           onclick={resetPlacement}>↺ reset to default</button
         >{:else}
-        default (centered on whichever screen the alert should draw attention to){/if}. Press <b>Ctrl+Alt+O</b> in game to drag and resize
+        default (centered on whichever screen the alert should draw attention to){/if}. Press <b>{settings.general.repositionHotkey}</b> in game to drag and resize
       it.
     </p>
     {#if placementError}<p class="section-note" style="color:var(--danger)">{placementError}</p>{/if}

@@ -6,6 +6,7 @@ mod audio;
 mod badge;
 mod clientmoves;
 mod diag;
+mod hotkey;
 mod overlay;
 mod reposition;
 mod runner;
@@ -20,14 +21,7 @@ use state::{AppState, SettingsData, Status};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-
-/// Toggles reposition mode for every known character. Chosen to be unlikely
-/// to collide with EVE's own bindings or Windows shortcuts; not yet
-/// user-configurable (docs/BACKLOG.md).
-fn reposition_shortcut() -> Shortcut {
-    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyO)
-}
+use tauri_plugin_global_shortcut::ShortcutState;
 
 #[tauri::command]
 fn get_status(state: State<'_, AppState>) -> Status {
@@ -56,17 +50,34 @@ fn get_settings_data(state: State<'_, AppState>) -> Result<SettingsData, String>
 /// immediately (live inheritance: every character re-resolves on its next
 /// alert, no restart needed).
 #[tauri::command]
-fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
+fn save_settings(state: State<'_, AppState>, mut settings: Settings) -> Result<(), String> {
     let bad = settings.invalid_regexes();
     if !bad.is_empty() {
         return Err(format!("These patterns don't compile: {}", bad.join(", ")));
     }
-    let cfg_dir = storage::config_dir();
-    settings.save(&cfg_dir.join("settings.json")).map_err(|e| e.to_string())?;
     let mut guard = state.engine.lock().unwrap();
     let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+    // Only `set_reposition_hotkey` changes the hotkey (it has to register it
+    // with Windows first), so an autosave from a stale page can't undo it.
+    settings.general.reposition_hotkey = engine.settings().settings().general.reposition_hotkey.clone();
+    settings.save(&storage::config_dir().join("settings.json")).map_err(|e| e.to_string())?;
     engine.settings_mut().edit(|s| *s = settings);
     Ok(())
+}
+
+/// Changes the reposition hotkey: registers it with Windows first (refused if
+/// another app holds it, and then nothing changes), then saves it.
+#[tauri::command]
+fn set_reposition_hotkey(app: AppHandle, state: State<'_, AppState>, accel: String) -> Result<(), String> {
+    if state.engine.lock().unwrap().is_none() {
+        return Err("Still starting up — try again in a moment.".into());
+    }
+    // Registered without holding the engine lock (this runs on the UI thread).
+    hotkey::change(&app, &accel)?;
+    let mut guard = state.engine.lock().unwrap();
+    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+    engine.settings_mut().edit(|s| s.general.reposition_hotkey = accel.trim().to_string());
+    engine.settings().settings().save(&storage::config_dir().join("settings.json")).map_err(|e| e.to_string())
 }
 
 /// Forgets a known channel outright. Refuses if the pilot has any settings of
@@ -308,7 +319,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    if *shortcut == reposition_shortcut() && event.state() == ShortcutState::Pressed {
+                    if hotkey::is_reposition(shortcut) && event.state() == ShortcutState::Pressed {
                         // Off the UI thread: toggling takes the overlay locks,
                         // which the client-move watcher also takes while it
                         // may be waiting on this thread (clientmoves.rs).
@@ -342,7 +353,8 @@ pub fn run() {
             check_for_updates,
             install_update,
             get_autostart,
-            set_autostart
+            set_autostart,
+            set_reposition_hotkey
         ])
         .setup(|app| {
             // First: everything below may read or write the app's files.
@@ -376,11 +388,15 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            if let Err(e) = app.global_shortcut().register(reposition_shortcut()) {
-                eprintln!("could not register the reposition hotkey (Ctrl+Alt+O): {e}");
-            }
+            // The engine loads settings on its own thread later; the hotkey is
+            // needed now, so read just that from the file.
+            let saved_hotkey = Settings::load(&storage::config_dir().join("settings.json")).map(|s| s.general.reposition_hotkey).unwrap_or_default();
+            let hotkey_problem = hotkey::register_at_startup(app.handle(), &saved_hotkey);
 
             toast::init(app.handle());
+            if let Some(problem) = &hotkey_problem {
+                toast::plain("Reposition hotkey", problem);
+            }
             if let Some(problem) = &storage::get().problem {
                 toast::plain("EVE Chatterer isn't portable right now", problem);
             }

@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import type { Settings } from "./model";
+  import HotkeyRecorder from "./HotkeyRecorder.svelte";
+
+  let { settings }: { settings: Settings } = $props();
 
   /** Mirrors `Locations` in src-tauri/src/lib.rs. */
   type Locations = {
@@ -14,6 +18,22 @@
   let locations = $state<Locations | null>(null);
   let error = $state("");
   let folderError = $state("");
+  let hotkeyError = $state("");
+  let hotkeyBusy = $state(false);
+
+  // Registered with Windows first; only saved once that works.
+  async function setHotkey(accel: string) {
+    hotkeyError = "";
+    hotkeyBusy = true;
+    try {
+      await invoke("set_reposition_hotkey", { accel });
+      settings.general.repositionHotkey = accel;
+    } catch (e) {
+      hotkeyError = String(e);
+    } finally {
+      hotkeyBusy = false;
+    }
+  }
 
   onMount(() => {
     invoke<Locations>("get_locations")
@@ -75,6 +95,18 @@
   </div>
 </section>
 {#if error}<p class="section-note error">{error}</p>{/if}
+
+<h2>Reposition hotkey</h2>
+<p class="section-note">
+  Press it in game to drag and resize a character's alerts. Pick something EVE doesn't use; EVE binds many Ctrl and Alt combinations.
+</p>
+<section class="card" style="padding:14px 18px">
+  <HotkeyRecorder value={settings.general.repositionHotkey} busy={hotkeyBusy} onsave={setHotkey} />
+  {#if settings.general.repositionHotkey !== "Ctrl+Alt+O"}
+    <button type="button" class="revert" style="margin-top:8px" disabled={hotkeyBusy} onclick={() => setHotkey("Ctrl+Alt+O")}>↺ use Ctrl+Alt+O</button>
+  {/if}
+  {#if hotkeyError}<p class="section-note error" style="margin:6px 0 0">{hotkeyError}</p>{/if}
+</section>
 
 <h2>File locations</h2>
 <p class="section-note">

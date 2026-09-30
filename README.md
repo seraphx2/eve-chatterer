@@ -87,7 +87,7 @@ There are three styles, which you can choose per channel:
 
 ### Moving and resizing
 
-Press **Ctrl + Alt + O** while playing. A sample alert appears on the character you're looking at: drag it where you want it, and drag its edge to make it wider or narrower. Press **Ctrl + Alt + O** again to save. Each character remembers its own position, and **Settings > (character) > reset to default** puts it back.
+Press **Ctrl + Alt + O** while playing (you can change this hotkey in **Settings > General**). A sample alert appears on the character you're looking at: drag it where you want it, and drag its edge to make it wider or narrower. Press **Ctrl + Alt + O** again to save. Each character remembers its own position, and **Settings > (character) > reset to default** puts it back.
 
 ---
 

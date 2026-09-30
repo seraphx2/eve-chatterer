@@ -309,7 +309,7 @@ impl Runner {
                             // Relative to whatever region the router picked (the
                             // client window, or its monitor when fullscreen), so it
                             // always lands inside the game (overlay.rs, OverlayPlacement).
-                            let custom_pos = saved.map(|p| (p.fx, p.fy));
+                            let custom_pos = saved;
                             let key = overlay::overlay_key(d.pilot_id.as_deref(), &d.pilot_name);
                             state.overlays.show(
                                 &self.app,
