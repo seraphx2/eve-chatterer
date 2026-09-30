@@ -656,8 +656,17 @@ fn meter_mode() -> String {
     std::env::var("EVE_CHATTERER_METER").ok().filter(|m| ["smooth", "stepped", "off"].contains(&m.as_str())).unwrap_or_else(|| "stepped".into())
 }
 
+/// Measurement only: `EVE_CHATTERER_FX=noshadow,noarrive,nopulse` (any
+/// subset) switches those effects off, to find what the CPU while animating
+/// goes to. Unknown words are dropped; unset means everything on.
+fn fx_off() -> String {
+    const KNOWN: [&str; 3] = ["noshadow", "noarrive", "nopulse"];
+    let raw = std::env::var("EVE_CHATTERER_FX").unwrap_or_default();
+    raw.split(',').map(str::trim).filter(|w| KNOWN.contains(w)).collect::<Vec<_>>().join("+")
+}
+
 fn create(app: &AppHandle, label: &str, width: f64) -> tauri::Result<WebviewWindow> {
-    let url = WebviewUrl::App(format!("overlay.html?meter={}", meter_mode()).into());
+    let url = WebviewUrl::App(format!("overlay.html?meter={}&fx={}", meter_mode(), fx_off()).into());
     let window = WebviewWindowBuilder::new(app, label, url)
         .title("EVE Chatterer overlay")
         .inner_size(win_w_for(width), WIN_H)

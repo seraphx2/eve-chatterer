@@ -44,7 +44,6 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
 ## Measurements still open
 
 - Overlay frame-time impact on EVE (FINDINGS #9 only has GPU utilization): needs a present-level capture such as PresentMon, with both clients in a static scene so EVE's own load does not swamp the effect. Also whether an idle open overlay window costs the compositor anything.
-- CPU while animating is about a quarter of one core; check what dominates (likely WebView2 rendering the shadows) and whether the shadows, the arrival animation or the Beacon pulse can be made cheaper.
 - Overlays at non-100% DPI scaling and on mixed-DPI monitors (also in FINDINGS' untested list).
 - OneDrive cloud-only placeholders: confirm the attribute check keeps the app from hydrating old files (also in FINDINGS' untested list).
 

@@ -82,6 +82,7 @@ Not exercised: alt-tab held longer than the 1.5 s grace with an alert firing dur
 
 - The resident cost is the Rust core (about 6 MB private). The WebView2 tree exists only while alerts show plus 45 s; two windows cost about what dev-prompt's single window does (about 230 MB private), so a second monitor does not double it. The exe is 8.2 MB.
 - CPU across the tree: about 25% of one core while alerts animate, about 1% with windows open and quiet.
+- What the animating CPU goes to (2026-09-30, release `--soak` on both monitors, meter off, `EVE_CHATTERER_FX` switching one effect off per run, tree CPU sampled 12-55 s, two rounds): all on 7.8% / 5.8% mean (peaks 68% / 44% of one core); no shadows 5.3% / 8.7%; no arrival animation 9.1% / 7.7%; **no Beacon pulse 1.5% / 2.6%**; all three off 1.5% / 1.4%. The pulse is ~75-80% of it: it animates a 26 px blurred `box-shadow`, which the browser re-rasterizes every frame for 900 ms. Shadows and the arrival animation are inside the round-to-round noise. Fixed the same day: the glow is drawn once on its own layer and only its opacity/scale animate. Re-measured (three rounds): all on 4.0% / 4.3% / 5.9% mean, peaks 17-35% (were 44-68%); no pulse 3.2% / 2.9% / 1.7%. The remaining ~2 points are compositing the blurred layer while it fades.
 - One window versus two, with per-client overlays and real alerts (2026-09-30, release build, two clients, whole tree sampled every 2 s):
 
   | State | Processes | Working set | Private | CPU (one core) |
