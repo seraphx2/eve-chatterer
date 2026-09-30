@@ -11,6 +11,14 @@ Releases are unsigned today (the README covers SmartScreen's "Run anyway"). The 
 - **Protection:** fork PR workflows require approval for all outside contributors (set 2026-09-29), because PR runs use the PR's workflow files and could otherwise target the runner by label. Never approve a PR touching `.github/`.
 - **Build:** Tauri's `bundle.windows.signCommand` (signtool with the Certum cert) signs the app exe before bundling and the installer after, so the updater `.sig` is made from the signed installer. The job fails fast if the certificate isn't reachable (SimplySign logged out). Test with a draft release first. Only `release.yml` moves to the runner; CI stays on GitHub's machines.
 
+## Chat feed: a running history of matched lines in each client
+
+Mockup: `docs/design/mini-feed.html`. Alerts pop up and vanish; the feed is what you glance at to catch up on what you missed.
+
+- **Look:** a small panel in a free corner of the EVE client, in the overlays' steel glass but more transparent and never animated. Strip-style rows (character tag, channel, sender, message cut to one line), newest at the bottom, the last ~6 lines. Older lines fade, the age sits on the right, a colored tick says why the line matched (amber mention, cyan keyword, blue always-alert), and the newest line is washed in the character's color for its first minute.
+- **Behavior:** owned by its client like the alerts: follows it, hides when it's minimized or on another desktop, click-through. Positioned per client with Ctrl+Alt+O.
+- **Settings:** Chat feed on/off, and Show: this character only / all characters (all: every character's lines, colored by character). A layered setting at the character level, not per channel: Defaults sets it and each character's page can override it, with the usual pip and use-default revert. For example on with all characters for the main, off for docked alts.
+
 ## Localization: translating the app (owner request 2026-09-30)
 
 - **Languages:** EVE's own: English, German, French, Russian, Japanese, Chinese (Simplified), Korean, Spanish. After English, Russian, German and Chinese matter most by player numbers.
@@ -68,10 +76,6 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
   - **Later, same shape:** Microsoft Teams, and a generic JSON option for people's own tools.
   - **Privacy:** this sends other players' chat off the PC. Clearly labeled opt-in; the README's "only talks to GitHub" statement must be updated. Some corps/alliances forbid relaying their chat outside the game, so the UI should make the per-channel choice deliberate.
   - **Reliability:** retry on failure, respect both services' 429 rate-limit responses, never drop a mention silently.
-
-## Features
-
-- **Chat feed** (mockup: `docs/design/mini-feed.html`): a quiet, always-there history of matched lines in a free corner of each EVE client, for catching up on alerts that popped up and vanished. Same steel glass as the overlays but more transparent and never animated; Strip-style rows (character tag, channel, sender, message cut to one line), newest at the bottom, older lines fading, age on the right, a colored tick for why it matched, the newest line washed in the character's color for its first minute; the last ~6 lines. Owned by the client like the alerts (follows it, hides with it, click-through); positioned per client with Ctrl+Alt+O. **Settings (owner decisions 2026-09-30):** Chat feed on/off, and Show: this character only / all characters (all: every character's lines, colored by character). A normal layered setting at the character level (not per channel): Defaults sets it, each character's page can override it (e.g. on with all characters for the main, off for docked alts), with the usual pip and use-default revert.
 
 ## Open questions
 
