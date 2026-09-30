@@ -100,6 +100,23 @@ pub struct Pilot {
     /// placement", same absent-means-inherit convention as `tag`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<OverlayPlacement>,
+    /// The corporation and alliance, as named in the latest Corp and Alliance
+    /// logs (logfmt::Header::instance). Shown in Settings; the merge check
+    /// reads the live logs directly. The alliance is kept even after leaving
+    /// one (EVE just stops writing an Alliance log), so a reader compares its
+    /// `session` with the corp's to tell whether it's current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corp: Option<Membership>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alliance: Option<Membership>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Membership {
+    pub name: String,
+    /// Unix seconds the log session naming it began (a new one each login).
+    pub session: i64,
 }
 
 impl Pilot {
@@ -143,7 +160,7 @@ impl PilotRegistry {
     pub fn observe(&mut self, id: &str, name: &str, live: bool, now: Stamp) -> Observation {
         match self.pilots.get_mut(id) {
             None => {
-                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None, placement: None };
+                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None, placement: None, corp: None, alliance: None };
                 self.pilots.insert(id.to_string(), p.clone());
                 if live {
                     Observation::NewLive(p)
@@ -193,6 +210,25 @@ impl PilotRegistry {
         if let Some(p) = self.pilots.get_mut(id) {
             p.channels.insert(channel_id.to_string(), KnownChannel { name: channel_name.to_string(), kind, last_seen: now.0 });
         }
+    }
+
+    /// Records the corp or alliance a Corp/Alliance log names. A newer session
+    /// replaces an older one, and within one session the latest name wins (a
+    /// mid-session corp change). Returns whether anything changed, so the
+    /// caller only saves when needed.
+    pub fn note_membership(&mut self, id: &str, kind: ChannelKind, name: &str, session: Stamp) -> bool {
+        let Some(p) = self.pilots.get_mut(id) else { return false };
+        let slot = match kind {
+            ChannelKind::Corp => &mut p.corp,
+            ChannelKind::Alliance => &mut p.alliance,
+            _ => return false,
+        };
+        let fresh = Membership { name: name.to_string(), session: session.0 };
+        if slot.as_ref().is_some_and(|m| m.session > fresh.session || *m == fresh) {
+            return false;
+        }
+        *slot = Some(fresh);
+        true
     }
 
     /// Forgets a channel outright — the UI only offers this when nothing is
@@ -246,6 +282,21 @@ impl PilotRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corp_and_alliance_follow_the_newest_log() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Holden", true, Stamp(0));
+        assert!(r.note_membership("1", ChannelKind::Corp, "Rocinante", Stamp(100)));
+        assert!(!r.note_membership("1", ChannelKind::Corp, "Rocinante", Stamp(100)), "same thing again changes nothing");
+        assert!(!r.note_membership("1", ChannelKind::Corp, "Old Corp", Stamp(50)), "an older log never wins");
+        assert!(r.note_membership("1", ChannelKind::Corp, "Tycho Station", Stamp(100)), "a mid-session change does");
+        assert!(r.note_membership("1", ChannelKind::Alliance, "Outer Planets Alliance", Stamp(100)));
+        assert!(!r.note_membership("1", ChannelKind::Local, "Jita", Stamp(100)));
+        let p = r.get("1").unwrap();
+        assert_eq!(p.corp.as_ref().unwrap().name, "Tycho Station");
+        assert_eq!(p.alliance.as_ref().unwrap().name, "Outer Planets Alliance");
+    }
 
     const T: Stamp = Stamp(1_790_000_000);
 

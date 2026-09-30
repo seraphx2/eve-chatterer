@@ -140,6 +140,26 @@ export interface Pilot {
   tag?: string;
   /** Absent means "use the default centered placement". */
   placement?: OverlayPlacement;
+  /** As named in the latest Corp / Alliance logs (core/src/pilots.rs `Membership`). */
+  corp?: Membership;
+  alliance?: Membership;
+}
+
+export interface Membership {
+  name: string;
+  /** Unix seconds the log session naming it began (a new one each login). */
+  session: number;
+}
+
+/**
+ * The character's corp and alliance. EVE simply stops writing an Alliance log
+ * once a corp leaves its alliance, so the stored alliance only counts if it
+ * came from the same login as the corp (both logs start within moments).
+ */
+export function affiliation(p: Pilot): { corp?: string; alliance?: string } {
+  const corp = p.corp?.name;
+  const current = p.alliance && (!p.corp || p.alliance.session >= p.corp.session - 600);
+  return { corp, alliance: current ? p.alliance!.name : undefined };
 }
 
 export interface SettingsData {

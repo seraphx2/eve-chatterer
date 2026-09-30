@@ -53,13 +53,10 @@ Releases are unsigned today (the README covers SmartScreen's "Run anyway"). The 
 - A live mini-feed/ticker of matched lines in a screen corner.
 - Opt-in "archive old logs" (off by default): move logs older than N days with no writes for a long time into an `Archive` subfolder; never delete, never touch the live set, skip anything that can't be opened. Housekeeping only (the live set makes cost independent of file count).
 
-## Minor: unnecessary merge hold for Corp/Alliance across unrelated characters
-
-`core/src/merge.rs`'s "shared channel" check keys only on the header `channel_id`, which for Corp and Alliance is the literal string `corp`/`alliance` regardless of _which_ corp or alliance. Two characters in different corporations are treated as sharing a channel, so a corp alert pays the ~750 ms merge hold for a duplicate that can never arrive. Not a correctness bug. Fix: key "shared" on channel_id plus something that identifies the corp/alliance instance, if the log header exposes one (check a real header); otherwise leave it, since the cost is small and only Corp/Alliance are affected.
-
 ## Open questions
 
 - Are chat log headers localized on non-English clients? Plan: read the header by position (channel id, name, listener, start time) with keys as a check; find a non-English sample.
+- Confirm the Alliance log starts with `EVE System > Channel changed to Alliance : <name>` like Corp does (FINDINGS #3); the corp/alliance display and the merge check assume it.
 - Tune the cross-character dedupe tolerance (start at ±2 s) against a busier hub capture.
 
 ## Not planned: Linux (research notes, unmeasured)

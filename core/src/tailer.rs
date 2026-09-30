@@ -55,7 +55,15 @@ impl Tailer {
         if self.header.is_none() {
             self.header = logfmt::read_header(&mut f)?;
         }
-        Ok(read.lines.iter().filter_map(|l| logfmt::parse_line(l)).collect())
+        let lines: Vec<ChatLine> = read.lines.iter().filter_map(|l| logfmt::parse_line(l)).collect();
+        // The instance line arrives right after the header (possibly after we
+        // first read it) and again if it changes mid-session: keep the latest.
+        if let Some(h) = self.header.as_mut() {
+            if let Some(name) = lines.iter().rev().find_map(logfmt::channel_instance) {
+                h.instance = Some(name);
+            }
+        }
+        Ok(lines)
     }
 }
 

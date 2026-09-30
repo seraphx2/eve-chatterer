@@ -77,6 +77,9 @@ pub enum Event {
     NewPilot(Pilot),
     /// A pilot seen only in old logs, registered silently.
     PilotInLogs(Pilot),
+    /// Something shown about a known pilot changed (its corp or alliance):
+    /// save the registry.
+    PilotUpdated { id: String },
     /// A client window for this character has existed for a while but no chat
     /// log has appeared: "log chat to file" is probably off in EVE. Reported once.
     ChatLoggingOff { name: String },
@@ -189,7 +192,7 @@ impl Engine {
 
         let mut merged: Vec<MergedLine> = vec![];
         for ev in &poll.events {
-            let shared = ev.header.as_ref().is_some_and(|h| self.live.listeners_in_channel(&h.channel_id) > 1);
+            let shared = ev.header.as_ref().is_some_and(|h| self.live.listeners_in_channel(h) > 1);
             merged.extend(self.merger.push(ev, now, shared));
         }
         merged.extend(self.merger.flush(now));
@@ -243,6 +246,27 @@ impl Engine {
         for (id, channel_id, channel_name, kind) in known {
             self.pilots.note_channel(&id, &channel_id, &channel_name, kind, now);
         }
+
+        // Each character's corp and alliance, named by EVE's instance line.
+        let memberships: Vec<(String, ChannelKind, String, Stamp)> = self
+            .live
+            .sessions()
+            .filter_map(|s| {
+                let h = s.header?;
+                let kind = classify(&h.channel_id, &h.channel_name);
+                if !matches!(kind, ChannelKind::Corp | ChannelKind::Alliance) {
+                    return None;
+                }
+                Some((s.char_id?.to_string(), kind, h.instance.clone()?, h.session_started.unwrap_or(Stamp(0))))
+            })
+            .collect();
+        let mut updated: Vec<String> = vec![];
+        for (id, kind, name, session) in memberships {
+            if self.pilots.note_membership(&id, kind, &name, session) && !updated.contains(&id) {
+                updated.push(id);
+            }
+        }
+        events.extend(updated.into_iter().map(|id| Event::PilotUpdated { id }));
     }
 
     /// Evaluates the line for every character that saw it, each under its own
@@ -391,6 +415,23 @@ mod tests {
         assert_eq!(got[0].targets.len(), 1);
         assert_eq!(got[0].targets[0].pilot_name, "Holden");
         assert_eq!(got[0].seen_by.len(), 2, "the router needs this to know Naomi's screen showed it too");
+    }
+
+    #[test]
+    fn a_characters_corp_is_learned_from_its_corp_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = session(dir.path(), "Corp", "1", "Holden");
+        append(&c, &line("2026.09.26 10:00:00", "EVE System", "Channel changed to Corp : Rocinante"));
+        let mut e = engine(dir.path(), Layer::default());
+        let t0 = Instant::now();
+        let ev = e.tick(t0);
+        assert!(ev.iter().any(|x| matches!(x, Event::PilotUpdated { id } if id == "1")), "{ev:?}");
+        assert_eq!(e.pilots().get("1").unwrap().corp.as_ref().unwrap().name, "Rocinante");
+        assert!(!e.tick(t0 + Duration::from_secs(1)).iter().any(|x| matches!(x, Event::PilotUpdated { .. })), "reported once");
+        // Moving corp mid-session.
+        append(&c, &line("2026.09.26 11:00:00", "EVE System", "Channel changed to Corp : Tycho Station"));
+        assert!(e.tick(t0 + Duration::from_secs(2)).iter().any(|x| matches!(x, Event::PilotUpdated { .. })));
+        assert_eq!(e.pilots().get("1").unwrap().corp.as_ref().unwrap().name, "Tycho Station");
     }
 
     #[test]

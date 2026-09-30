@@ -14,6 +14,11 @@ pub struct Header {
     pub channel_name: String,
     pub listener: String,
     pub session_started: Option<Stamp>,
+    /// Which corporation, alliance or solar system this channel currently is,
+    /// from EVE's "Channel changed to Corp : Sukebe Corporation" system line
+    /// (written right after the header, and again if it changes mid-session).
+    /// The header's channel id alone is just `corp` / `alliance` for everyone.
+    pub instance: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,10 +37,15 @@ fn clean(s: &str) -> &str {
 /// session start), so a localized client still works.
 pub fn parse_header(text: &str) -> Option<Header> {
     let mut fields: Vec<(String, String)> = vec![];
-    for raw in text.lines() {
+    let mut instance = None;
+    let mut lines = text.lines();
+    for raw in lines.by_ref() {
         let line = clean(raw);
         if line.starts_with('[') {
-            break; // first chat line: the header is over
+            // First chat line: the header is over. EVE writes the channel's
+            // instance line first, so look at the opening few.
+            instance = std::iter::once(raw).chain(lines.by_ref().take(4)).filter_map(parse_line).find_map(|l| channel_instance(&l));
+            break;
         }
         if let Some((k, v)) = line.split_once(':') {
             fields.push((k.trim().to_string(), v.trim().to_string()));
@@ -57,7 +67,20 @@ pub fn parse_header(text: &str) -> Option<Header> {
         channel_name: field("Channel Name", 1).unwrap_or_default(),
         listener,
         session_started: field("Session started", 3).and_then(|v| Stamp::parse_log(&v)),
+        instance,
     })
+}
+
+/// The name in EVE's `EVE System > Channel changed to Corp : Sukebe Corporation`
+/// line (the same shape for Alliance, and for Local with the solar system).
+/// English wording only; a localized client just doesn't report an instance.
+pub fn channel_instance(l: &ChatLine) -> Option<String> {
+    if l.sender != "EVE System" {
+        return None;
+    }
+    let (_, name) = l.text.strip_prefix("Channel changed to ")?.split_once(" : ")?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Parses `[ 2026.09.27 01:37:31 ] Sender > text`. Returns `None` for header
@@ -183,6 +206,18 @@ mod tests {
         let h = parse_header(text).unwrap();
         assert_eq!((h.channel_name.as_str(), h.listener.as_str()), ("Lokal", "Holden"));
         assert!(h.session_started.is_some());
+    }
+
+    #[test]
+    fn the_instance_line_after_the_header_names_the_corp() {
+        let text = header("corp", "Corp", "Holden")
+            + &line("2026.09.30 00:47:40", "EVE System", "Channel changed to Corp : Sukebe Corporation")
+            + &line("2026.09.30 00:47:40", "EVE System", "Channel MOTD: Test");
+        assert_eq!(parse_header(&text).unwrap().instance.as_deref(), Some("Sukebe Corporation"));
+        // Not written yet, or somebody else saying it: no instance.
+        assert_eq!(parse_header(&header("corp", "Corp", "Holden")).unwrap().instance, None);
+        let fake = header("corp", "Corp", "Holden") + &line("2026.09.30 00:47:41", "Amos Burton", "Channel changed to Corp : Nope");
+        assert_eq!(parse_header(&fake).unwrap().instance, None);
     }
 
     #[test]

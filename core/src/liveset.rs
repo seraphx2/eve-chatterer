@@ -157,15 +157,23 @@ impl LiveSet {
         })
     }
 
-    /// Distinct characters currently followed in a channel. More than one
-    /// means the same line may arrive from several logs.
-    pub fn listeners_in_channel(&self, channel_id: &str) -> usize {
-        if channel_id.is_empty() {
+    /// Distinct characters currently followed in the same channel as `h`. More
+    /// than one means the same line may arrive from several logs. Corp and
+    /// Alliance share one channel id (`corp` / `alliance`) across every
+    /// corporation, so when both logs name their instance, the names must
+    /// match too; an unknown instance counts as the same (the safe side: a
+    /// needless merge wait, never a duplicate alert).
+    pub fn listeners_in_channel(&self, h: &Header) -> usize {
+        if h.channel_id.is_empty() {
             return 1;
         }
+        let same_instance = |o: &Header| match (&h.instance, &o.instance) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            _ => true,
+        };
         self.sessions
             .values()
-            .filter(|s| s.tailer.header().is_some_and(|h| h.channel_id == channel_id))
+            .filter(|s| s.tailer.header().is_some_and(|o| o.channel_id == h.channel_id && same_instance(o)))
             .map(|s| s.name.char_id.as_deref().unwrap_or(""))
             .collect::<HashSet<_>>()
             .len()
@@ -375,9 +383,26 @@ mod tests {
         write_session(dir.path(), "Corp", "20260926_100000", "1", "Holden", &[]);
         let mut live = LiveSet::new(dir.path(), existing());
         live.rescan().unwrap();
-        assert_eq!(live.listeners_in_channel("local"), 2);
-        assert_eq!(live.listeners_in_channel("chan"), 1);
-        assert_eq!(live.listeners_in_channel(""), 1);
+        let h = |id: &str| Header { channel_id: id.into(), ..Header::default() };
+        assert_eq!(live.listeners_in_channel(&h("local")), 2);
+        assert_eq!(live.listeners_in_channel(&h("chan")), 1);
+        assert_eq!(live.listeners_in_channel(&h("")), 1);
+    }
+
+    #[test]
+    fn characters_in_different_corps_do_not_share_corp_chat() {
+        let dir = tempfile::tempdir().unwrap();
+        let named = |corp: &str| [("2026.09.26 10:00:00", "EVE System", format!("Channel changed to Corp : {corp}"))];
+        for (id, who, corp) in [("1", "Holden", "Rocinante"), ("2", "Naomi", "Rocinante"), ("3", "Amos Burton", "Tycho Station")] {
+            let l = named(corp);
+            write_session(dir.path(), "Corp", "20260926_100000", id, who, &[(l[0].0, l[0].1, l[0].2.as_str())]);
+        }
+        let mut live = LiveSet::new(dir.path(), existing());
+        live.rescan().unwrap();
+        let corp = |name: Option<&str>| Header { channel_id: "chan".into(), instance: name.map(String::from), ..Header::default() };
+        assert_eq!(live.listeners_in_channel(&corp(Some("Rocinante"))), 2);
+        assert_eq!(live.listeners_in_channel(&corp(Some("tycho station"))), 1, "names compare without case");
+        assert_eq!(live.listeners_in_channel(&corp(None)), 3, "an unknown corp waits, as before");
     }
 
     #[test]

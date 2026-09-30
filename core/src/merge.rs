@@ -111,7 +111,7 @@ mod tests {
             path: PathBuf::new(),
             char_id: Some(char_id.to_string()),
             channel_name: "Local".to_string(),
-            header: Some(Header { channel_id: "local".into(), channel_name: "Local".into(), listener: name.into(), session_started: None }),
+            header: Some(Header { channel_id: "local".into(), channel_name: "Local".into(), listener: name.into(), session_started: None, instance: None }),
             line: ChatLine { stamp: Stamp(ts), sender: sender.into(), text: text.into() },
         }
     }

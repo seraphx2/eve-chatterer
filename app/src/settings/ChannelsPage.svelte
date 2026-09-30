@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { CHANNEL_KINDS, CHANNEL_KIND_LABEL, deriveTag, relativeTime, type Pilot, type Settings } from "./model";
+  import { CHANNEL_KINDS, CHANNEL_KIND_LABEL, affiliation, deriveTag, relativeTime, type Pilot, type Settings } from "./model";
   import ChannelRow from "./ChannelRow.svelte";
   import TrackedListSection from "./TrackedListSection.svelte";
   import SenderListSection from "./SenderListSection.svelte";
@@ -13,6 +13,11 @@
     online = false,
     onedit,
   }: { settings: Settings; pilotId: string | null; pilot?: Pilot; online?: boolean; onedit: () => void } = $props();
+
+  // From the Corp / Alliance logs; unknown until the character has logged in
+  // with chat logging on.
+  const org = $derived(pilot ? affiliation(pilot) : {});
+  const orgOf = (kind: string) => (kind === "corp" ? org.corp : kind === "alliance" ? org.alliance : undefined);
 
   const knownChannels = $derived(
     pilot
@@ -90,6 +95,9 @@
          which is what tells Offline apart from a character only ever seen in old logs. -->
     {#if pilot}<span class="badge {online ? 'live' : 'logs'}">{online ? "Online" : pilot.live ? "Offline" : "Seen in logs"}</span>{/if}
   </div>
+  {#if org.corp || org.alliance}
+    <p class="pilot-org">{[org.corp, org.alliance].filter(Boolean).join(" · ")}</p>
+  {/if}
   <p class="pilot-id">Character ID {pilotId}</p>
   <p class="lede">
     Untouched fields follow Defaults and stay in sync with it. A <span class="pip"></span>marks a field this character overrides, with a
@@ -131,7 +139,7 @@
 {/if}
 <section class="card">
   {#each CHANNEL_KINDS as kind (kind)}
-    <ChannelRow {settings} {pilotId} {kind} label={CHANNEL_KIND_LABEL[kind]} {onedit} />
+    <ChannelRow {settings} {pilotId} {kind} label={CHANNEL_KIND_LABEL[kind]} meta={orgOf(kind)} {onedit} />
   {/each}
 </section>
 

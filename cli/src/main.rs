@@ -281,6 +281,13 @@ fn main() {
                     }
                     save(&args, &engine);
                 }
+                Event::PilotUpdated { id } => {
+                    if let (true, Some(p)) = (args.verbose, engine.pilots().get(&id)) {
+                        let named = |m: &Option<eve_chatterer_core::pilots::Membership>| m.as_ref().map_or("?".to_string(), |m| m.name.clone());
+                        println!("[{}] pilot  {}  corp: {}  alliance: {}", clock(), p.name, named(&p.corp), named(&p.alliance));
+                    }
+                    save(&args, &engine);
+                }
                 Event::ChatLoggingOff { name } => {
                     println!("[{}] CHAT LOGGING LOOKS OFF for {name}: a client is open but no chat log has appeared", clock());
                 }

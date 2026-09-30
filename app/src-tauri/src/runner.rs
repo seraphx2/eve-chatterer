@@ -257,7 +257,7 @@ impl Runner {
                 self.save_pilots();
                 notify(&self.app, &format!("New character: {}", p.name), "Chat alerts are on for this character. Open EVE Chatterer from the tray to adjust them.");
             }
-            Event::PilotInLogs(_) => self.save_pilots(),
+            Event::PilotInLogs(_) | Event::PilotUpdated { .. } => self.save_pilots(),
             Event::ChatLoggingOff { name } => {
                 notify(&self.app, &format!("No chat log for {name}"), "Turn on \"Log chat to file\" in EVE's chat settings so alerts can work for this character.");
             }
