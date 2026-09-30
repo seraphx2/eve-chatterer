@@ -336,12 +336,14 @@ mod imp {
                     Ok(r) if r == NotificationUpdateResult::Succeeded => {
                         b.count = count;
                         b.last = Instant::now();
+                        println!("       [notification] folded into {} ({count} lines)", t.key);
                         return;
                     }
                     Ok(_) => {} // dismissed or expired: show the line instead
                     Err(e) => eprintln!("notification update failed, showing it instead: {e}"),
                 }
             }
+            println!("       [notification] nothing to fold into for {}: shown as a new one", t.key);
             self.chat(t);
         }
     }
