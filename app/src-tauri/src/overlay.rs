@@ -625,8 +625,8 @@ fn create(app: &AppHandle, label: &str, width: f64) -> tauri::Result<WebviewWind
         .focused(false)
         .visible(false)
         .resizable(false)
-        .shadow(false)
-        .build()?;
+        .shadow(false);
+    let window = crate::storage::with_webview_dir(window).build()?;
     window.set_ignore_cursor_events(true)?; // click-through
     platform::never_activate(&window);
     Ok(window)

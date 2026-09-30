@@ -41,7 +41,7 @@ Download **`EVE.Chatterer_…_x64-setup.exe`** from the [latest release](https:/
 - It starts with Windows from then on. You can turn that off in **Settings > General**.
 - It keeps itself up to date (see [Updates](#updates)).
 
-> Prefer not to install? Download the **portable** zip instead, unzip it anywhere and run `eve-chatterer-app.exe`. The portable copy works the same but won't update itself or start with Windows.
+> Prefer not to install? Download the **portable** zip instead, unzip it into a folder of its own (somewhere you can write to, like Documents) and run `eve-chatterer-app.exe`. It keeps its settings in a `data` folder right beside it, so you can move or copy the whole folder, and deleting it removes everything. The portable copy won't update itself, and starting with Windows is off until you turn it on in **Settings > General**.
 
 > Windows may say it "protected your PC" the first time, because the app isn't code-signed by a paid certificate. Click **More info > Run anyway**.
 

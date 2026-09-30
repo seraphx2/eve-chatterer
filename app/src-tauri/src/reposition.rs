@@ -103,9 +103,7 @@ fn exit(app: &AppHandle) {
         let Some(id) = key.strip_prefix("id:") else { continue };
         engine.pilots_mut().set_placement(id, Some(placement));
     }
-    if let Ok(cfg_dir) = app.path().app_config_dir() {
-        if let Err(e) = engine.pilots().save(&cfg_dir.join("pilots.json")) {
-            eprintln!("could not save pilots.json after reposition: {e}");
-        }
+    if let Err(e) = engine.pilots().save(&crate::storage::config_dir().join("pilots.json")) {
+        eprintln!("could not save pilots.json after reposition: {e}");
     }
 }

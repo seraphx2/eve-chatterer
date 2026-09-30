@@ -160,7 +160,7 @@ pub fn spawn(app: AppHandle) {
 }
 
 fn run(app: AppHandle) -> Result<(), String> {
-    let cfg_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let cfg_dir = crate::storage::config_dir();
     let settings = Settings::load(&cfg_dir.join("settings.json")).unwrap_or_else(|e| {
         eprintln!("could not read settings.json, using the defaults: {e}");
         Settings::with_defaults()

@@ -10,6 +10,7 @@ mod overlay;
 mod reposition;
 mod runner;
 mod state;
+mod storage;
 mod testalerts;
 mod toast;
 mod updates;
@@ -55,12 +56,12 @@ fn get_settings_data(state: State<'_, AppState>) -> Result<SettingsData, String>
 /// immediately (live inheritance: every character re-resolves on its next
 /// alert, no restart needed).
 #[tauri::command]
-fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
+fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
     let bad = settings.invalid_regexes();
     if !bad.is_empty() {
         return Err(format!("These patterns don't compile: {}", bad.join(", ")));
     }
-    let cfg_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let cfg_dir = storage::config_dir();
     settings.save(&cfg_dir.join("settings.json")).map_err(|e| e.to_string())?;
     let mut guard = state.engine.lock().unwrap();
     let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
@@ -72,7 +73,7 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
 /// its own for that channel, so this can never silently discard a configured
 /// rule (docs/BACKLOG.md, "Known channels never get pruned").
 #[tauri::command]
-fn remove_known_channel(app: AppHandle, state: State<'_, AppState>, pilot_id: String, channel_id: String) -> Result<(), String> {
+fn remove_known_channel(state: State<'_, AppState>, pilot_id: String, channel_id: String) -> Result<(), String> {
     let mut guard = state.engine.lock().unwrap();
     let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
     let has_override = engine.settings().settings().pilots.get(&pilot_id).is_some_and(|p| p.channels.contains_key(&channel_id));
@@ -80,7 +81,7 @@ fn remove_known_channel(app: AppHandle, state: State<'_, AppState>, pilot_id: St
         return Err("This channel has settings of its own — reset them to Defaults first, then remove it.".into());
     }
     engine.pilots_mut().remove_channel(&pilot_id, &channel_id);
-    let pilots_path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pilots.json");
+    let pilots_path = storage::config_dir().join("pilots.json");
     engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
@@ -88,11 +89,11 @@ fn remove_known_channel(app: AppHandle, state: State<'_, AppState>, pilot_id: St
 /// tag. `PilotRegistry::set_tag` normalizes it (trim, cap, uppercase), so
 /// nothing needs validating here first.
 #[tauri::command]
-fn set_pilot_tag(app: AppHandle, state: State<'_, AppState>, pilot_id: String, tag: String) -> Result<(), String> {
+fn set_pilot_tag(state: State<'_, AppState>, pilot_id: String, tag: String) -> Result<(), String> {
     let mut guard = state.engine.lock().unwrap();
     let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
     engine.pilots_mut().set_tag(&pilot_id, Some(&tag));
-    let pilots_path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pilots.json");
+    let pilots_path = storage::config_dir().join("pilots.json");
     engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
@@ -102,11 +103,11 @@ fn set_pilot_tag(app: AppHandle, state: State<'_, AppState>, pilot_id: String, t
 /// dragged somewhere awkward) — reposition mode itself has no delete
 /// gesture, only drag/resize.
 #[tauri::command]
-fn clear_pilot_placement(app: AppHandle, state: State<'_, AppState>, pilot_id: String) -> Result<(), String> {
+fn clear_pilot_placement(state: State<'_, AppState>, pilot_id: String) -> Result<(), String> {
     let mut guard = state.engine.lock().unwrap();
     let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
     engine.pilots_mut().set_placement(&pilot_id, None);
-    let pilots_path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pilots.json");
+    let pilots_path = storage::config_dir().join("pilots.json");
     engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
 }
 
@@ -131,6 +132,45 @@ async fn pick_sound_file(app: AppHandle) -> Result<Option<String>, String> {
         None => Ok(None),
         Some(p) => p.into_path().map(|p| Some(p.display().to_string())).map_err(|e| e.to_string()),
     }
+}
+
+/// The General page's "File locations": where settings live (storage.rs),
+/// the chat log folder the app found, and the program folder.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Locations {
+    storage: storage::Storage,
+    /// `None` when there's no `Documents\EVE\logs\Chatlogs` yet.
+    chat_logs: Option<String>,
+    program: Option<String>,
+}
+
+#[tauri::command]
+fn get_locations() -> Locations {
+    Locations {
+        storage: storage::get().clone(),
+        chat_logs: eve_chatterer_core::paths::chatlogs_dir().map(|p| p.display().to_string()),
+        program: program_dir().map(|p| p.display().to_string()),
+    }
+}
+
+fn program_dir() -> Option<std::path::PathBuf> {
+    std::env::current_exe().ok()?.parent().map(std::path::Path::to_path_buf)
+}
+
+/// Opens one of the known folders in Explorer. Takes a name, not a path, so
+/// the page can only open these folders.
+#[tauri::command]
+fn open_folder(which: String) -> Result<(), String> {
+    let dir = match which.as_str() {
+        "chat_logs" => eve_chatterer_core::paths::chatlogs_dir().ok_or("EVE's chat log folder doesn't exist yet.")?,
+        "settings" => storage::config_dir(),
+        "program" => program_dir().ok_or("Couldn't find the program folder.")?,
+        other => return Err(format!("Unknown folder: {other}")),
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't open {}: {e}", dir.display()))?;
+    std::process::Command::new("explorer").arg(&dir).spawn().map_err(|e| format!("Couldn't open {}: {e}", dir.display()))?;
+    Ok(())
 }
 
 /// Update state for the About page (updates.rs).
@@ -237,8 +277,8 @@ fn open_settings(app: &AppHandle) {
             .title("EVE Chatterer")
             .inner_size(1100.0, 800.0)
             .min_inner_size(1100.0, 800.0)
-            .center()
-            .build();
+            .center();
+        let built = storage::with_webview_dir(built).build();
         match built {
             // Hide instead of letting the OS close button tear the webview
             // down, so the next open reuses the warm one above (instant)
@@ -296,6 +336,8 @@ pub fn run() {
             reposition_box_height,
             preview_sound,
             pick_sound_file,
+            get_locations,
+            open_folder,
             get_update_status,
             check_for_updates,
             install_update,
@@ -303,6 +345,8 @@ pub fn run() {
             set_autostart
         ])
         .setup(|app| {
+            // First: everything below may read or write the app's files.
+            storage::init(app.handle());
             let settings_i = MenuItem::with_id(app, "tray-settings", "Settings…", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "tray-quit", "Quit EVE Chatterer", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&settings_i, &PredefinedMenuItem::separator(app)?, &quit_i])?;
@@ -337,6 +381,9 @@ pub fn run() {
             }
 
             toast::init(app.handle());
+            if let Some(problem) = &storage::get().problem {
+                toast::plain("EVE Chatterer isn't portable right now", problem);
+            }
             audio::start();
             updates::start(app.handle().clone(), menu.clone());
             clientmoves::start(app.handle().clone());

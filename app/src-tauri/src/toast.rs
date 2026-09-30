@@ -164,10 +164,7 @@ mod imp {
     fn init_here(app: &AppHandle) {
         let _ = APP.set(app.clone());
         WINRT.with(|_| ());
-        let Ok(cache) = app.path().app_cache_dir() else {
-            eprintln!("notifications: no cache folder; they will not show");
-            return;
-        };
+        let cache = crate::storage::cache_dir();
         let badges = cache.join("badges");
         let _ = std::fs::create_dir_all(&badges);
         let icon = cache.join("app-icon.png");

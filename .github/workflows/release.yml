@@ -107,14 +107,16 @@ jobs:
           prerelease: ${{ inputs.prerelease || false }}
           uploadUpdaterJson: true
 
-      # The bare exe as a no-install option. It's the same build the installer
-      # contains, but the bundler's marker isn't in it, so it reports
-      # "unmanaged" and never runs the in-app updater (updates.rs).
+      # The bare exe as a no-install option. It isn't installed (no
+      # uninstall.exe beside it), so it never runs the in-app updater
+      # (updates.rs). The empty `portable` file makes it keep its settings in
+      # a `data` folder beside the exe instead of AppData (storage.rs).
       - name: Package portable zip
         shell: bash
         run: |
           cd target/release
-          7z a "eve-chatterer_${{ steps.version.outputs.value }}_x64-portable.zip" eve-chatterer-app.exe
+          : > portable
+          7z a "eve-chatterer_${{ steps.version.outputs.value }}_x64-portable.zip" eve-chatterer-app.exe portable
 
       - name: Attach portable zip to release
         shell: bash
