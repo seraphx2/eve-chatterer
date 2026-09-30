@@ -71,7 +71,7 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
 
 ## Features
 
-- A live mini-feed/ticker of matched lines in a screen corner.
+- **Chat feed** (mockup: `docs/design/mini-feed.html`): a quiet, always-there history of matched lines in a free corner of each EVE client, for catching up on alerts that popped up and vanished. Same steel glass as the overlays but more transparent and never animated; Strip-style rows (character tag, channel, sender, message cut to one line), newest at the bottom, older lines fading, age on the right, a colored tick for why it matched, the newest line washed in the character's color for its first minute; the last ~6 lines. Owned by the client like the alerts (follows it, hides with it, click-through); positioned per client with Ctrl+Alt+O. **Settings (owner decision 2026-09-30), General page:** Chat feed on/off, and Show: this character only / all characters (all: every character's lines on whichever client you're looking at, colored by character).
 
 ## Open questions
 
