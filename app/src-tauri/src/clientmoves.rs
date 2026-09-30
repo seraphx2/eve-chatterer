@@ -83,7 +83,7 @@ mod imp {
             return;
         }
         if let (Some(region), Some(monitor)) = (winapi::client_rect_of(hwnd), winapi::monitor_rect_of(hwnd)) {
-            overlays.follow_client(app, owner, region, monitor);
+            overlays.follow_client(owner, region, monitor);
         }
     }
 

@@ -7,6 +7,12 @@
 //! message, a "Pilot · reason" line, and Switch to / Dismiss buttons.
 //! Repeats from the same pilot and channel replace one notification with a
 //! running count instead of stacking.
+//!
+//! Everything WinRT happens on one thread of its own ("notifications"); the
+//! public functions only post to it, so any thread may call them, the UI
+//! thread included. Setting WinRT up on the UI thread (multithreaded) made
+//! the UI thread's own COM setup fail the next time it created a window
+//! (RPC_E_CHANGED_MODE), which panicked the app.
 
 /// One chat alert, as a notification.
 #[derive(Clone, Debug)]
@@ -98,13 +104,16 @@ mod imp {
     use std::collections::HashMap;
     use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::mpsc::{channel, Receiver, Sender};
+    use std::sync::OnceLock;
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Manager};
     use windows::core::{Interface, HSTRING, IInspectable};
     use windows::Data::Xml::Dom::XmlDocument;
     use windows::Foundation::TypedEventHandler;
-    use windows::UI::Notifications::{NotificationData, ToastActivatedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier};
+    use windows::UI::Notifications::{
+        NotificationData, NotificationUpdateResult, ToastActivatedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier,
+    };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -117,6 +126,13 @@ mod imp {
     /// Repeats within this long of the previous one join its notification.
     const BURST: Duration = Duration::from_secs(120);
     const APP_ICON: &[u8] = include_bytes!("../icons/128x128.png");
+    const GROUP: &str = "chat";
+
+    enum Request {
+        Chat(ChatToast),
+        Fold(ChatToast),
+        Plain { title: String, body: String },
+    }
 
     struct Burst {
         count: u32,
@@ -126,6 +142,7 @@ mod imp {
         _shown: ToastNotification,
     }
 
+    /// Lives on the notifications thread only.
     struct State {
         notifier: ToastNotifier,
         badges: PathBuf,
@@ -134,36 +151,81 @@ mod imp {
     }
 
     static APP: OnceLock<AppHandle> = OnceLock::new();
-    static STATE: Mutex<Option<State>> = Mutex::new(None);
+    static QUEUE: OnceLock<Sender<Request>> = OnceLock::new();
 
-    thread_local! {
-        static WINRT: () = unsafe {
-            let _ = RoInitialize(RO_INIT_MULTITHREADED);
-        };
-    }
-
-    /// Registers the app's identity (per user, no admin) so Windows shows
-    /// its name and icon, and gets the notifier ready.
-    ///
-    /// Runs on its own short-lived thread: `init` is called from Tauri's
-    /// setup, on the UI thread, and initializing WinRT there (multithreaded)
-    /// makes the UI thread's own COM setup fail the next time it creates a
-    /// window (RPC_E_CHANGED_MODE), which panicked the app when the settings
-    /// window opened. Nothing here may run on the UI thread.
+    /// Starts the notifications thread, which registers the app's identity
+    /// (per user, no admin) so Windows shows its name and icon. Anything
+    /// posted before it's ready waits in its queue.
     pub fn init(app: &AppHandle) {
-        let app = app.clone();
-        let done = std::thread::Builder::new().name("notifications-init".into()).spawn(move || init_here(&app));
-        match done {
-            Ok(t) => {
-                let _ = t.join();
+        let _ = APP.set(app.clone());
+        let (tx, rx) = channel();
+        match std::thread::Builder::new().name("notifications".into()).spawn(move || run(rx)) {
+            Ok(_) => {
+                let _ = QUEUE.set(tx);
             }
             Err(e) => eprintln!("notifications: could not start: {e}"),
         }
     }
 
-    fn init_here(app: &AppHandle) {
-        let _ = APP.set(app.clone());
-        WINRT.with(|_| ());
+    /// Shows a chat alert. A new line from the same pilot and channel
+    /// replaces its notification (new message, new popup) and carries the
+    /// running line count forward.
+    pub fn chat(t: ChatToast) {
+        post(Request::Chat(t));
+    }
+
+    /// A line past its pilot's rate cap: bump the line count on that pilot
+    /// and channel's notification in place (replacing it instead pulled it
+    /// off screen within a second). If that notification is gone, dismissed
+    /// or never sent, the line is shown as a new one, so it's never lost.
+    pub fn fold(t: ChatToast) {
+        post(Request::Fold(t));
+    }
+
+    /// An app-level notification (new character, logging off, errors).
+    pub fn plain(title: &str, body: &str) {
+        post(Request::Plain { title: title.to_string(), body: body.to_string() });
+    }
+
+    fn post(r: Request) {
+        match QUEUE.get() {
+            Some(q) => {
+                let _ = q.send(r);
+            }
+            None => {
+                if let Request::Plain { title, body } = r {
+                    eprintln!("{title}: {body}");
+                }
+            }
+        }
+    }
+
+    fn run(rx: Receiver<Request>) {
+        // Multithreaded WinRT, on this thread and never on the UI thread.
+        unsafe {
+            let _ = RoInitialize(RO_INIT_MULTITHREADED);
+        }
+        let mut state = setup();
+        for req in rx {
+            let Some(state) = state.as_mut() else {
+                if let Request::Plain { title, body } = req {
+                    eprintln!("{title}: {body}");
+                }
+                continue;
+            };
+            match req {
+                Request::Chat(t) => state.chat(t),
+                Request::Fold(t) => state.fold(t),
+                Request::Plain { title, body } => {
+                    if let Err(e) = state.show(&plain_xml(&title, &body), None, None) {
+                        eprintln!("notification failed: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    fn setup() -> Option<State> {
         let cache = crate::storage::cache_dir();
         let badges = cache.join("badges");
         let _ = std::fs::create_dir_all(&badges);
@@ -174,7 +236,7 @@ mod imp {
             Ok(n) => n,
             Err(e) => {
                 eprintln!("notifications: could not create the notifier: {e}");
-                return;
+                return None;
             }
         };
         // The tag's typeface: Windows' own Segoe UI Semibold (the overlays'
@@ -183,7 +245,7 @@ mod imp {
         let font = ["seguisb.ttf", "segoeui.ttf"]
             .iter()
             .find_map(|f| std::fs::read(fonts.join(f)).ok().and_then(|b| ab_glyph::FontVec::try_from_vec(b).ok()));
-        *STATE.lock().unwrap() = Some(State { notifier, badges, font, bursts: HashMap::new() });
+        Some(State { notifier, badges, font, bursts: HashMap::new() })
     }
 
     fn register_identity(icon: &str) {
@@ -201,24 +263,12 @@ mod imp {
         }
     }
 
-    fn badge_path(state: &State, t: &ChatToast) -> Option<String> {
-        let safe: String = format!("{}-{}-{}", t.tag, t.accent.trim_start_matches('#'), t.tone).chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-        let path = state.badges.join(format!("{safe}.png"));
-        if !path.exists() {
-            let png = badge::render(&t.tag, badge::parse_hex(&t.accent), badge::tone_color(t.tone), state.font.as_ref())?;
-            std::fs::write(&path, png).ok()?;
-        }
-        Some(path.display().to_string())
-    }
-
     /// A short, stable notification tag for a burst key (Windows caps tags
     /// at 64 characters; pilot and channel names could exceed that).
     fn short_tag(key: &str) -> String {
         let h = key.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
-
-    const GROUP: &str = "chat";
 
     /// The values bound into a chat notification (`{attribution}`), and a
     /// sequence number so Windows never applies an older update over a newer.
@@ -229,76 +279,70 @@ mod imp {
         Ok(data)
     }
 
-    fn show(state: &State, xml: &str, tag: Option<&str>, data: Option<NotificationData>) -> windows::core::Result<ToastNotification> {
-        let doc = XmlDocument::new()?;
-        doc.LoadXml(&HSTRING::from(xml))?;
-        let toast = ToastNotification::CreateToastNotification(&doc)?;
-        if let Some(tag) = tag {
-            toast.SetTag(&HSTRING::from(tag))?;
-            toast.SetGroup(&HSTRING::from(GROUP))?;
-        }
-        if let Some(data) = data {
-            toast.SetData(&data)?;
-        }
-        toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(|_, a| {
-            let args = a.as_ref().and_then(|a| a.cast::<ToastActivatedEventArgs>().ok()).and_then(|a| a.Arguments().ok()).map(|h| h.to_string());
-            if let Some(pilot) = args.as_deref().and_then(|a| a.strip_prefix("switch=")) {
-                switch_to(pilot);
+    impl State {
+        fn badge_path(&self, t: &ChatToast) -> Option<String> {
+            let safe: String = format!("{}-{}-{}", t.tag, t.accent.trim_start_matches('#'), t.tone).chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+            let path = self.badges.join(format!("{safe}.png"));
+            if !path.exists() {
+                let png = badge::render(&t.tag, badge::parse_hex(&t.accent), badge::tone_color(t.tone), self.font.as_ref())?;
+                std::fs::write(&path, png).ok()?;
             }
-            Ok(())
-        }))?;
-        state.notifier.Show(&toast)?;
-        Ok(toast)
-    }
+            Some(path.display().to_string())
+        }
 
-    /// Shows a chat alert. A new line from the same pilot and channel
-    /// replaces its notification (new message, new popup) and carries the
-    /// running line count forward.
-    pub fn chat(t: ChatToast) {
-        WINRT.with(|_| ());
-        let mut guard = STATE.lock().unwrap();
-        let Some(state) = guard.as_mut() else { return };
-        state.bursts.retain(|_, b| b.last.elapsed() < BURST);
-        let count = state.bursts.get(&t.key).map_or(1, |b| b.count + 1);
-        let logo = badge_path(state, &t);
-        let xml = chat_xml(&t, logo.as_deref());
-        let shown = chat_data(&attribution(&t, count), count).and_then(|data| show(state, &xml, Some(&short_tag(&t.key)), Some(data)));
-        match shown {
-            Ok(shown) => {
-                state.bursts.insert(t.key.clone(), Burst { count, last: Instant::now(), toast: t, _shown: shown });
+        fn show(&self, xml: &str, tag: Option<&str>, data: Option<NotificationData>) -> windows::core::Result<ToastNotification> {
+            let doc = XmlDocument::new()?;
+            doc.LoadXml(&HSTRING::from(xml))?;
+            let toast = ToastNotification::CreateToastNotification(&doc)?;
+            if let Some(tag) = tag {
+                toast.SetTag(&HSTRING::from(tag))?;
+                toast.SetGroup(&HSTRING::from(GROUP))?;
             }
-            Err(e) => eprintln!("notification failed: {e}"),
+            if let Some(data) = data {
+                toast.SetData(&data)?;
+            }
+            toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(|_, a| {
+                let args = a.as_ref().and_then(|a| a.cast::<ToastActivatedEventArgs>().ok()).and_then(|a| a.Arguments().ok()).map(|h| h.to_string());
+                if let Some(pilot) = args.as_deref().and_then(|a| a.strip_prefix("switch=")) {
+                    switch_to(pilot);
+                }
+                Ok(())
+            }))?;
+            self.notifier.Show(&toast)?;
+            Ok(toast)
         }
-    }
 
-    /// A line past its pilot's rate cap: bump the line count on that pilot
-    /// and channel's notification in place. It stays on screen with its own
-    /// timer; replacing it instead pulled it off screen within a second.
-    pub fn fold(key: &str) {
-        WINRT.with(|_| ());
-        let mut guard = STATE.lock().unwrap();
-        let Some(state) = guard.as_mut() else { return };
-        let Some(b) = state.bursts.get_mut(key).filter(|b| b.last.elapsed() < BURST) else { return };
-        b.count += 1;
-        b.last = Instant::now();
-        let text = attribution(&b.toast, b.count);
-        let result = chat_data(&text, b.count)
-            .and_then(|data| state.notifier.UpdateWithTagAndGroup(&data, &HSTRING::from(short_tag(key)), &HSTRING::from(GROUP)));
-        if let Err(e) = result {
-            eprintln!("notification update failed: {e}");
+        fn chat(&mut self, t: ChatToast) {
+            self.bursts.retain(|_, b| b.last.elapsed() < BURST);
+            let count = self.bursts.get(&t.key).map_or(1, |b| b.count + 1);
+            let logo = self.badge_path(&t);
+            let xml = chat_xml(&t, logo.as_deref());
+            let shown = chat_data(&attribution(&t, count), count).and_then(|data| self.show(&xml, Some(&short_tag(&t.key)), Some(data)));
+            match shown {
+                Ok(shown) => {
+                    self.bursts.insert(t.key.clone(), Burst { count, last: Instant::now(), toast: t, _shown: shown });
+                }
+                Err(e) => eprintln!("notification failed: {e}"),
+            }
         }
-    }
 
-    /// An app-level notification (new character, logging off, errors).
-    pub fn plain(title: &str, body: &str) {
-        WINRT.with(|_| ());
-        let guard = STATE.lock().unwrap();
-        let Some(state) = guard.as_ref() else {
-            eprintln!("{title}: {body}");
-            return;
-        };
-        if let Err(e) = show(state, &plain_xml(title, body), None, None) {
-            eprintln!("notification failed: {e}");
+        fn fold(&mut self, t: ChatToast) {
+            if let Some(b) = self.bursts.get_mut(&t.key).filter(|b| b.last.elapsed() < BURST) {
+                let count = b.count + 1;
+                let text = attribution(&b.toast, count);
+                let updated = chat_data(&text, count)
+                    .and_then(|data| self.notifier.UpdateWithTagAndGroup(&data, &HSTRING::from(short_tag(&t.key)), &HSTRING::from(GROUP)));
+                match updated {
+                    Ok(r) if r == NotificationUpdateResult::Succeeded => {
+                        b.count = count;
+                        b.last = Instant::now();
+                        return;
+                    }
+                    Ok(_) => {} // dismissed or expired: show the line instead
+                    Err(e) => eprintln!("notification update failed, showing it instead: {e}"),
+                }
+            }
+            self.chat(t);
         }
     }
 
@@ -351,7 +395,9 @@ mod imp {
     pub fn chat(t: ChatToast) {
         eprintln!("{} in {}: {}", t.sender, t.channel, t.text);
     }
-    pub fn fold(_: &str) {}
+    pub fn fold(t: ChatToast) {
+        chat(t);
+    }
     pub fn plain(title: &str, body: &str) {
         eprintln!("{title}: {body}");
     }

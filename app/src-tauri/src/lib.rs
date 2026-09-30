@@ -16,26 +16,23 @@ mod testalerts;
 mod toast;
 mod updates;
 
+use eve_chatterer_core::pilots::PilotRegistry;
 use eve_chatterer_core::settings::Settings;
-use state::{AppState, SettingsData, Status};
+use state::{AppState, SettingsData};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::ShortcutState;
 
-#[tauri::command]
-fn get_status(state: State<'_, AppState>) -> Status {
-    state.status.lock().unwrap().clone()
-}
+// Every command that takes an app lock is `async`, so it runs off the UI
+// thread: the UI thread must never wait on one (state.rs, "Locking rules").
 
 /// Everything the settings window needs: the raw layered settings plus every
 /// known character (each with the public channels it's actually been seen
-/// in). "Not ready yet" only during the brief startup window before the
-/// engine has found the log folder.
+/// in).
 #[tauri::command]
-fn get_settings_data(state: State<'_, AppState>) -> Result<SettingsData, String> {
-    let guard = state.engine.lock().unwrap();
-    let engine = guard.as_ref().ok_or("Still starting up — try again in a moment.")?;
+async fn get_settings_data(state: State<'_, AppState>) -> Result<SettingsData, String> {
+    let engine = state.engine.lock().unwrap();
     let online = state
         .last_snapshot
         .lock()
@@ -46,66 +43,68 @@ fn get_settings_data(state: State<'_, AppState>) -> Result<SettingsData, String>
     Ok(SettingsData { settings: engine.settings().settings().clone(), pilots: engine.pilots().iter().cloned().collect(), online })
 }
 
-/// Validates, persists to settings.json, and applies to the running engine
-/// immediately (live inheritance: every character re-resolves on its next
-/// alert, no restart needed).
+/// Persists to settings.json and applies to the running engine immediately
+/// (live inheritance: every character re-resolves on its next alert, no
+/// restart needed). Returns the tracked patterns that don't compile: they're
+/// saved anyway, since refusing the save would lose every other edit with
+/// them, and matching skips them until they're fixed.
 #[tauri::command]
-fn save_settings(state: State<'_, AppState>, mut settings: Settings) -> Result<(), String> {
-    let bad = settings.invalid_regexes();
-    if !bad.is_empty() {
-        return Err(format!("These patterns don't compile: {}", bad.join(", ")));
-    }
-    let mut guard = state.engine.lock().unwrap();
-    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+async fn save_settings(state: State<'_, AppState>, mut settings: Settings) -> Result<Vec<String>, String> {
+    let mut engine = state.engine.lock().unwrap();
     // Only `set_reposition_hotkey` changes the hotkey (it has to register it
     // with Windows first), so an autosave from a stale page can't undo it.
     settings.general.reposition_hotkey = engine.settings().settings().general.reposition_hotkey.clone();
-    settings.save(&storage::config_dir().join("settings.json")).map_err(|e| e.to_string())?;
+    // Written under the engine lock, so two saves land in the order applied.
+    settings.save(&storage::settings_path()).map_err(|e| format!("Couldn't save settings.json: {e}"))?;
+    let bad = settings.invalid_regexes();
     engine.settings_mut().edit(|s| *s = settings);
-    Ok(())
+    Ok(bad)
+}
+
+/// The Tracked dialog's check of a pattern, with the same engine and flags
+/// matching uses (JavaScript's own RegExp differs). `None` when it compiles,
+/// otherwise why not.
+#[tauri::command]
+fn check_regex(pattern: String) -> Option<String> {
+    let e = eve_chatterer_core::rules::compile_pattern(&pattern).err()?.to_string();
+    // The regex crate's message quotes the pattern with our (?i) prefix and a
+    // caret line; its last line is the reason.
+    Some(e.lines().rev().find_map(|l| l.trim().strip_prefix("error: ")).unwrap_or(e.trim()).to_string())
 }
 
 /// Changes the reposition hotkey: registers it with Windows first (refused if
 /// another app holds it, and then nothing changes), then saves it.
 #[tauri::command]
-fn set_reposition_hotkey(app: AppHandle, state: State<'_, AppState>, accel: String) -> Result<(), String> {
-    if state.engine.lock().unwrap().is_none() {
-        return Err("Still starting up — try again in a moment.".into());
-    }
-    // Registered without holding the engine lock (this runs on the UI thread).
+async fn set_reposition_hotkey(app: AppHandle, state: State<'_, AppState>, accel: String) -> Result<(), String> {
+    // Registered before taking the engine lock: it waits on the UI thread.
     hotkey::change(&app, &accel)?;
-    let mut guard = state.engine.lock().unwrap();
-    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+    let mut engine = state.engine.lock().unwrap();
     engine.settings_mut().edit(|s| s.general.reposition_hotkey = accel.trim().to_string());
-    engine.settings().settings().save(&storage::config_dir().join("settings.json")).map_err(|e| e.to_string())
+    engine.settings().settings().save(&storage::settings_path()).map_err(|e| format!("Couldn't save settings.json: {e}"))
 }
 
 /// Forgets a known channel outright. Refuses if the pilot has any settings of
 /// its own for that channel, so this can never silently discard a configured
 /// rule (docs/BACKLOG.md, "Known channels never get pruned").
 #[tauri::command]
-fn remove_known_channel(state: State<'_, AppState>, pilot_id: String, channel_id: String) -> Result<(), String> {
-    let mut guard = state.engine.lock().unwrap();
-    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+async fn remove_known_channel(state: State<'_, AppState>, pilot_id: String, channel_id: String) -> Result<(), String> {
+    let mut engine = state.engine.lock().unwrap();
     let has_override = engine.settings().settings().pilots.get(&pilot_id).is_some_and(|p| p.channels.contains_key(&channel_id));
     if has_override {
         return Err("This channel has settings of its own — reset them to Defaults first, then remove it.".into());
     }
     engine.pilots_mut().remove_channel(&pilot_id, &channel_id);
-    let pilots_path = storage::config_dir().join("pilots.json");
-    engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
+    state::save_pilots(&engine)
 }
 
 /// Sets (or, given blank/whitespace, clears) a character's own Strip-badge
 /// tag. `PilotRegistry::set_tag` normalizes it (trim, cap, uppercase), so
 /// nothing needs validating here first.
 #[tauri::command]
-fn set_pilot_tag(state: State<'_, AppState>, pilot_id: String, tag: String) -> Result<(), String> {
-    let mut guard = state.engine.lock().unwrap();
-    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+async fn set_pilot_tag(state: State<'_, AppState>, pilot_id: String, tag: String) -> Result<(), String> {
+    let mut engine = state.engine.lock().unwrap();
     engine.pilots_mut().set_tag(&pilot_id, Some(&tag));
-    let pilots_path = storage::config_dir().join("pilots.json");
-    engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
+    state::save_pilots(&engine)
 }
 
 /// Clears a character's saved overlay position/width, so its alerts go back
@@ -114,12 +113,10 @@ fn set_pilot_tag(state: State<'_, AppState>, pilot_id: String, tag: String) -> R
 /// dragged somewhere awkward) — reposition mode itself has no delete
 /// gesture, only drag/resize.
 #[tauri::command]
-fn clear_pilot_placement(state: State<'_, AppState>, pilot_id: String) -> Result<(), String> {
-    let mut guard = state.engine.lock().unwrap();
-    let engine = guard.as_mut().ok_or("Still starting up — try again in a moment.")?;
+async fn clear_pilot_placement(state: State<'_, AppState>, pilot_id: String) -> Result<(), String> {
+    let mut engine = state.engine.lock().unwrap();
     engine.pilots_mut().set_placement(&pilot_id, None);
-    let pilots_path = storage::config_dir().join("pilots.json");
-    engine.pilots().save(&pilots_path).map_err(|e| e.to_string())
+    state::save_pilots(&engine)
 }
 
 /// The Audio page's play button: the given file (or the built-in sound for
@@ -332,12 +329,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_ARG])))
-        .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
-            get_status,
             overlay_ready,
             get_settings_data,
             save_settings,
+            check_regex,
             remove_known_channel,
             set_pilot_tag,
             clear_pilot_placement,
@@ -359,6 +355,15 @@ pub fn run() {
         .setup(|app| {
             // First: everything below may read or write the app's files.
             storage::init(app.handle());
+            // Next: anything below may need to tell the user something.
+            toast::init(app.handle());
+            // A file that can't be read is kept aside, never overwritten, and
+            // the user is told (core/src/store.rs).
+            let (settings, settings_problem) = Settings::open(&storage::settings_path());
+            let (pilots, pilots_problem) = PilotRegistry::open(&storage::pilots_path());
+            for problem in [settings_problem, pilots_problem].into_iter().flatten() {
+                toast::plain("EVE Chatterer couldn't read its settings", &problem);
+            }
             let settings_i = MenuItem::with_id(app, "tray-settings", "Settings…", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "tray-quit", "Quit EVE Chatterer", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&settings_i, &PredefinedMenuItem::separator(app)?, &quit_i])?;
@@ -388,18 +393,15 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // The engine loads settings on its own thread later; the hotkey is
-            // needed now, so read just that from the file.
-            let saved_hotkey = Settings::load(&storage::config_dir().join("settings.json")).map(|s| s.general.reposition_hotkey).unwrap_or_default();
-            let hotkey_problem = hotkey::register_at_startup(app.handle(), &saved_hotkey);
-
-            toast::init(app.handle());
-            if let Some(problem) = &hotkey_problem {
-                toast::plain("Reposition hotkey", problem);
+            if let Some(problem) = hotkey::register_at_startup(app.handle(), &settings.general.reposition_hotkey) {
+                toast::plain("Reposition hotkey", &problem);
             }
             if let Some(problem) = &storage::get().problem {
                 toast::plain("EVE Chatterer isn't portable right now", problem);
             }
+            // Before anything that reads the state: commands, the runner, the
+            // move hook. Building the engine does no I/O.
+            app.manage(AppState::new(runner::build_engine(settings, pilots)));
             audio::start();
             updates::start(app.handle().clone(), menu.clone());
             clientmoves::start(app.handle().clone());
@@ -415,6 +417,9 @@ pub fn run() {
             }
             if std::env::args().any(|a| a == "--soak") {
                 testalerts::soak(app.handle());
+            }
+            if std::env::args().any(|a| a == "--freezetest") {
+                testalerts::freezetest(app.handle());
             }
             Ok(())
         })

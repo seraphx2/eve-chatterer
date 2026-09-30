@@ -74,13 +74,6 @@ pub struct OverlayAlert {
     pub stack_up: bool,
 }
 
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Fold {
-    pub pilot: String,
-    pub channel_id: String,
-}
-
 /// Sent to a window entering reposition mode, so it can show a placeholder
 /// (dashed outline, name, drag/resize hints) instead of real alerts.
 #[derive(Serialize, Clone, Debug)]
@@ -99,7 +92,9 @@ pub struct RepositionInfo {
 // reposition hotkey need several presses.
 enum Msg {
     Alert(OverlayAlert),
-    Fold(Fold),
+    /// A capped line: the page bumps the count of that pilot and channel's
+    /// alert if one is showing, and otherwise shows this one.
+    Fold(OverlayAlert),
     RepositionEnter(RepositionInfo),
     RepositionExit,
 }
@@ -285,34 +280,53 @@ impl Overlays {
         self.slots.lock().unwrap().len()
     }
 
-    // Shows an alert for the pilot identified by `key`: centered near the
-    // top of the region, or at the pilot's saved spot in it (see `place`).
-    pub fn show(&self, app: &AppHandle, key: &str, p: Placement, mut alert: OverlayAlert) {
-        let (width, region) = (p.width, p.region);
-        let label = label_for(key);
-        let existed = self.slots.lock().unwrap().contains_key(&label);
-        if !existed {
-            // Built outside the lock: creating a window pumps the UI thread.
-            let started = Instant::now();
-            match create(app, &label, width) {
-                Ok(window) => {
-                    diag(format!("{label}: window built in {} ms", started.elapsed().as_millis()));
-                    let mut slots = self.slots.lock().unwrap();
-                    if slots.contains_key(&label) {
-                        let _ = window.destroy(); // another thread created it first
-                    } else {
-                        slots.insert(
-                            label.clone(),
-                            Slot { window, ready: false, queue: vec![], last_used: Instant::now(), waiting_since: Some(started), owner: None, layout: None, scale: 1.0, desktop: None, hidden_by_cloak: false },
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!("       [overlay] could not create window {label}: {e}");
-                    return;
-                }
-            }
+    /// Makes sure window `label` exists, building it if needed. Built outside
+    /// the lock: building a window waits on the UI thread. `Some(true)` if it
+    /// was built just now, `None` if it couldn't be.
+    fn ensure_slot(&self, app: &AppHandle, label: &str, width: f64, time_first_message: bool) -> Option<bool> {
+        if self.slots.lock().unwrap().contains_key(label) {
+            return Some(false);
         }
+        let started = Instant::now();
+        let window = match create(app, label, width) {
+            Ok(w) => w,
+            Err(e) => {
+                println!("       [overlay] could not create window {label}: {e}");
+                return None;
+            }
+        };
+        diag(format!("{label}: window built in {} ms", started.elapsed().as_millis()));
+        let mut slots = self.slots.lock().unwrap();
+        if slots.contains_key(label) {
+            let _ = window.destroy(); // another thread built it first (posted, doesn't wait)
+            return Some(false);
+        }
+        let waiting_since = time_first_message.then_some(started);
+        slots.insert(
+            label.to_string(),
+            Slot { window, ready: false, queue: vec![], last_used: Instant::now(), waiting_since, owner: None, layout: None, scale: 1.0, desktop: None, hidden_by_cloak: false },
+        );
+        Some(true)
+    }
+
+    // Shows an alert in the window identified by `key`: centered near the
+    // top of the region, or at the saved spot in it (see `place`).
+    pub fn show(&self, app: &AppHandle, key: &str, p: Placement, alert: OverlayAlert) {
+        self.present(app, key, p, alert, false);
+    }
+
+    /// A line past its pilot's rate cap, sent to the window its alert would
+    /// have gone to: the page bumps the count on that pilot and channel's
+    /// alert if one is showing, or shows `alert` (a Strip) instead, so a
+    /// capped line is never lost.
+    pub fn fold(&self, app: &AppHandle, key: &str, p: Placement, alert: OverlayAlert) {
+        self.present(app, key, p, alert, true);
+    }
+
+    fn present(&self, app: &AppHandle, key: &str, p: Placement, mut alert: OverlayAlert, fold: bool) {
+        let region = p.region;
+        let label = label_for(key);
+        let Some(built) = self.ensure_slot(app, &label, p.width, true) else { return };
         let mut slots = self.slots.lock().unwrap();
         let Some(slot) = slots.get_mut(&label) else {
             println!("       [overlay] {label}: slot vanished right after creation");
@@ -323,16 +337,15 @@ impl Overlays {
             println!("       [overlay] {label}: mid-reposition, delivering without moving the window");
         } else {
             adopt(slot, p.owner);
-            let (scale, up) = place(app, &slot.window, &p);
+            let (scale, up) = place(&slot.window, &p);
             alert.stack_up = up;
             slot.scale = scale;
             slot.layout = Some(p);
         }
-        let visible = slot.window.is_visible().unwrap_or(false);
         platform::show_without_activating(&slot.window);
         println!(
-            "       [overlay] {label} {} (was visible: {visible}, ready: {}), placed at region ({},{})-({},{})",
-            if existed { "reused" } else { "created" },
+            "       [overlay] {label} {} (ready: {}), placed at region ({},{})-({},{})",
+            if built { "created" } else { "reused" },
             slot.ready,
             region.left,
             region.top,
@@ -340,24 +353,11 @@ impl Overlays {
             region.bottom
         );
         slot.last_used = Instant::now();
-        let msg = Msg::Alert(alert);
-        if slot.ready {
-            send(app, &label, &msg);
-        } else {
+        let msg = if fold { Msg::Fold(alert) } else { Msg::Alert(alert) };
+        if !slot.ready {
             println!("       [overlay] {label}: not ready yet, queuing (queue len will be {})", slot.queue.len() + 1);
-            slot.queue.push(msg);
         }
-    }
-
-    /// A line past its pilot's rate cap: tell every open overlay to bump the badge.
-    pub fn fold(&self, app: &AppHandle, f: Fold) {
-        let mut slots = self.slots.lock().unwrap();
-        for (label, slot) in slots.iter_mut() {
-            if slot.ready {
-                send(app, label, &Msg::Fold(f.clone()));
-                slot.last_used = Instant::now();
-            }
-        }
+        deliver(app, &label, slot, msg);
     }
 
     /// The overlay page has loaded: flush what was queued while it started.
@@ -397,25 +397,10 @@ impl Overlays {
     pub fn enter_reposition(&self, app: &AppHandle, targets: Vec<RepositionTarget>) {
         for t in targets {
             let label = label_for(&t.key);
-            let existed = self.slots.lock().unwrap().contains_key(&label);
-            if !existed {
-                match create(app, &label, t.width) {
-                    Ok(window) => {
-                        let mut slots = self.slots.lock().unwrap();
-                        if !slots.contains_key(&label) {
-                            slots.insert(
-                                label.clone(),
-                                Slot { window, ready: false, queue: vec![], last_used: Instant::now(), waiting_since: None, owner: None, layout: None, scale: 1.0, desktop: None, hidden_by_cloak: false },
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!("       [overlay] reposition: could not create window {label}: {e}");
-                        continue;
-                    }
-                }
+            if self.ensure_slot(app, &label, t.width, false).is_none() {
+                continue;
             }
-            let scale = scale_for(app, &t.monitor);
+            let scale = scale_for(&t.monitor);
             let mut s = Session {
                 region: t.region,
                 scale,
@@ -433,21 +418,23 @@ impl Overlays {
                     s.set_origin(x, if e.bottom { edge_y - s.box_h } else { edge_y });
                 }
             }
-            let mut slots = self.slots.lock().unwrap();
-            let Some(slot) = slots.get_mut(&label) else { continue };
-            adopt(slot, t.owner);
-            let (x, y) = s.origin();
-            let _ = slot.window.set_size(PhysicalSize::new(s.w as u32, s.box_h as u32));
-            let _ = slot.window.set_position(PhysicalPosition::new(x, y));
-            platform::set_click_through(&slot.window, false);
-            platform::show_without_activating(&slot.window);
-            deliver(app, &label, slot, Msg::RepositionEnter(RepositionInfo {
-                    name: t.name,
-                    tag: t.tag,
-                    accent: t.accent,
-                    hotkey: crate::hotkey::current_text().unwrap_or_else(|| eve_chatterer_core::settings::DEFAULT_REPOSITION_HOTKEY.to_string()),
-                }));
-            self.sessions.lock().unwrap().insert(label, s);
+            let window = {
+                let mut slots = self.slots.lock().unwrap();
+                let Some(slot) = slots.get_mut(&label) else { continue };
+                adopt(slot, t.owner);
+                let (x, y) = s.origin();
+                // Posted to the UI thread, not waited on.
+                let _ = slot.window.set_size(PhysicalSize::new(s.w as u32, s.box_h as u32));
+                let _ = slot.window.set_position(PhysicalPosition::new(x, y));
+                let hotkey = crate::hotkey::current_text().unwrap_or_else(|| eve_chatterer_core::settings::DEFAULT_REPOSITION_HOTKEY.to_string());
+                deliver(app, &label, slot, Msg::RepositionEnter(RepositionInfo { name: t.name, tag: t.tag, accent: t.accent, hotkey }));
+                self.sessions.lock().unwrap().insert(label, s);
+                slot.window.clone()
+            };
+            // Outside the locks: changing the window's style waits on the UI
+            // thread, which owns it (state.rs, "Locking rules").
+            platform::set_click_through(&window, false);
+            platform::show_without_activating(&window);
         }
     }
 
@@ -515,11 +502,11 @@ impl Overlays {
     /// Keeps every overlay inside its EVE client as the client moves or is
     /// resized, called on every presence sample. Positioned boxes keep their
     /// relative spot; alerts are re-placed exactly as when they were shown.
-    pub fn follow(&self, app: &AppHandle, snap: &Snapshot) {
+    pub fn follow(&self, snap: &Snapshot) {
         for c in &snap.clients {
             // Minimized clients have no rect: their overlays hide with them.
             if let (Some(region), Some(monitor)) = (c.rect, c.monitor) {
-                self.follow_client(app, c.hwnd, region, monitor);
+                self.follow_client(c.hwnd, region, monitor);
             }
         }
         // Keep each overlay on its client's virtual desktop, in case the
@@ -542,7 +529,7 @@ impl Overlays {
     /// dragged, and on every presence sample. Positions are always computed
     /// from what was placed (never read back from the window, which may not
     /// have caught up with an earlier move yet), so nothing drifts.
-    pub fn follow_client(&self, app: &AppHandle, owner: isize, region: Rect, monitor: Rect) {
+    pub fn follow_client(&self, owner: isize, region: Rect, monitor: Rect) {
         let mut slots = self.slots.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
         for (label, slot) in slots.iter_mut() {
@@ -564,7 +551,7 @@ impl Overlays {
                     // A different monitor may have a different scale: size it again.
                     p.monitor = monitor;
                     let p = *p;
-                    slot.scale = place(app, &slot.window, &p).0;
+                    slot.scale = place(&slot.window, &p).0;
                 } else {
                     let (x, y, ..) = geometry(p, slot.scale);
                     platform::move_to(&slot.window, x, y);
@@ -598,15 +585,18 @@ impl Overlays {
         let mut out = Vec::with_capacity(sessions.len());
         for (label, s) in sessions {
             let key = key_from_label(&label);
-            let mut slots = self.slots.lock().unwrap();
-            let Some(slot) = slots.get_mut(&label) else {
-                out.push((key, None));
-                continue;
+            let window = {
+                let mut slots = self.slots.lock().unwrap();
+                let Some(slot) = slots.get_mut(&label) else {
+                    out.push((key, None));
+                    continue;
+                };
+                deliver(app, &label, slot, Msg::RepositionExit);
+                slot.last_used = Instant::now();
+                slot.window.clone()
             };
-            deliver(app, &label, slot, Msg::RepositionExit);
-            platform::set_click_through(&slot.window, true);
-            slot.last_used = Instant::now();
-            drop(slots);
+            // Outside the lock: it waits on the UI thread.
+            platform::set_click_through(&window, true);
             out.push((key, Some(s.placement())));
         }
         out
@@ -691,13 +681,16 @@ fn create(app: &AppHandle, label: &str, width: f64) -> tauri::Result<WebviewWind
     Ok(window)
 }
 
-/// The scale factor of the monitor whose top-left corner is at `monitor`.
-fn scale_for(app: &AppHandle, monitor: &Rect) -> f64 {
-    app.available_monitors()
-        .ok()
-        .and_then(|ms| ms.into_iter().find(|m| m.position().x == monitor.left && m.position().y == monitor.top))
-        .map(|m| m.scale_factor())
-        .unwrap_or(1.0)
+/// The scale factor of `monitor`. From Windows directly: Tauri's monitor
+/// list waits on the UI thread, and this is asked while holding the lock.
+#[cfg(windows)]
+fn scale_for(monitor: &Rect) -> f64 {
+    eve_chatterer_core::winapi::scale_at(monitor.left + monitor.width() / 2, monitor.top + monitor.height() / 2)
+}
+
+#[cfg(not(windows))]
+fn scale_for(_: &Rect) -> f64 {
+    1.0
 }
 
 /// Top-left of the positioned box (physical) for a saved fractional spot in
@@ -714,9 +707,10 @@ fn edge_to_y(region: &Rect, e: Edge) -> i32 {
 }
 
 /// Sizes and positions a window for real alerts, returning the scale it used
-/// and whether its alerts should stack upward (see `geometry`).
-fn place(app: &AppHandle, window: &WebviewWindow, p: &Placement) -> (f64, bool) {
-    let scale = scale_for(app, &p.monitor);
+/// and whether its alerts should stack upward (see `geometry`). Tauri posts
+/// the size and position to the UI thread without waiting.
+fn place(window: &WebviewWindow, p: &Placement) -> (f64, bool) {
+    let scale = scale_for(&p.monitor);
     let (x, y, w, h, up) = geometry(p, scale);
     let _ = window.set_size(PhysicalSize::new(w as u32, h as u32));
     let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -761,7 +755,7 @@ mod platform {
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
     use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, ShowWindowAsync, SW_HIDE, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_NOTOPMOST,
+        GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindowAsync, SW_HIDE, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_NOTOPMOST,
         HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
         WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
     };
@@ -840,10 +834,12 @@ mod platform {
         }
     }
 
+    /// Shows without activating, and without waiting for the UI thread
+    /// that owns the window (`ShowWindow` would).
     pub fn show_without_activating(window: &WebviewWindow) {
         if let Some(h) = hwnd(window) {
             unsafe {
-                let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
+                let _ = ShowWindowAsync(h, SW_SHOWNOACTIVATE);
             }
         }
     }
@@ -871,7 +867,7 @@ mod platform {
         unsafe {
             SetWindowLongPtrW(h, GWLP_HWNDPARENT, owner.unwrap_or(0));
             let after = if owner.is_some() { HWND_NOTOPMOST } else { HWND_TOPMOST };
-            let _ = SetWindowPos(h, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            let _ = SetWindowPos(h, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
         }
     }
 }

@@ -3,10 +3,11 @@
 
 use crate::audio;
 use crate::overlay;
-use crate::overlay::{Fold, OverlayAlert};
-use crate::state::{AppState, PilotView};
-use eve_chatterer_core::engine::{Alert, Engine, EngineConfig, Event};
+use crate::overlay::OverlayAlert;
+use crate::state::{self, AppState};
+use crate::toast::{self, ChatToast};
 use eve_chatterer_core::channel::ChannelKind;
+use eve_chatterer_core::engine::{Alert, Engine, EngineConfig, Event};
 use eve_chatterer_core::governor::Governor;
 use eve_chatterer_core::paths;
 use eve_chatterer_core::pilots::{tag_from_name, PilotRegistry};
@@ -16,11 +17,9 @@ use eve_chatterer_core::router::{self, Anchor, Decision, Delivery, Outcome, Rout
 use eve_chatterer_core::rules::Reason;
 use eve_chatterer_core::settings::{Settings, SettingsBook};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
-use crate::toast::{self, ChatToast};
 
 const SAMPLE_EVERY: Duration = Duration::from_millis(250);
 const TICK_EVERY: Duration = Duration::from_millis(500);
@@ -35,13 +34,12 @@ pub fn accent_for(name: &str) -> String {
 
 /// The Strip badge text for an alert: the pilot's own tag if the registry has
 /// one for it, otherwise derived from the name. Works with no matching pilot
-/// (a synthetic test alert, or mid-startup) by falling back to the
-/// name-derived tag either way.
+/// (a synthetic test alert) by falling back to the name-derived tag.
 pub fn tag_for(app: &AppHandle, pilot_id: Option<&str>, pilot_name: &str) -> String {
     let state = app.state::<AppState>();
-    let guard = state.engine.lock().unwrap();
+    let engine = state.engine.lock().unwrap();
     pilot_id
-        .and_then(|id| guard.as_ref()?.pilots().get(id))
+        .and_then(|id| engine.pilots().get(id))
         .map(eve_chatterer_core::pilots::Pilot::display_tag)
         .unwrap_or_else(|| tag_from_name(pilot_name))
 }
@@ -51,8 +49,8 @@ pub fn tag_for(app: &AppHandle, pilot_id: Option<&str>, pilot_name: &str) -> Str
 /// via reposition mode.
 pub fn placement_for(app: &AppHandle, pilot_id: Option<&str>) -> Option<eve_chatterer_core::pilots::OverlayPlacement> {
     let state = app.state::<AppState>();
-    let guard = state.engine.lock().unwrap();
-    pilot_id.and_then(|id| guard.as_ref()?.pilots().get(id)?.placement)
+    let engine = state.engine.lock().unwrap();
+    pilot_id.and_then(|id| engine.pilots().get(id)?.placement)
 }
 
 pub fn style_name(s: OverlayStyle) -> &'static str {
@@ -141,87 +139,106 @@ fn placement(app: &AppHandle, anchor: Anchor, snap: &Snapshot) -> Option<(Rect, 
     }
 }
 
-/// An app-level Windows notification (not a chat alert).
-fn notify(_app: &AppHandle, title: &str, body: &str) {
-    toast::plain(title, body);
+/// The engine, built at startup whether or not EVE's chat log folder exists
+/// yet: its rescan starts following the folder as soon as it appears, and
+/// Settings works in the meantime.
+pub fn build_engine(settings: Settings, pilots: PilotRegistry) -> Engine {
+    // Only if Windows can't name the Documents folder at all: an empty path
+    // is never a folder, so nothing is followed (`LogFolder` says why).
+    let dir = paths::chatlogs_path().unwrap_or_default();
+    Engine::new(dir, EngineConfig::default(), pilots, SettingsBook::new(settings))
+}
+
+/// Whether EVE's chat log folder is there yet. A new player usually hasn't
+/// turned on "Log chat to file", so the folder may appear long after startup:
+/// say once that the app is waiting, and once when it starts.
+struct LogFolder {
+    path: Option<PathBuf>,
+    found: bool,
+}
+
+impl LogFolder {
+    fn new() -> LogFolder {
+        let path = paths::chatlogs_path();
+        let found = path.as_ref().is_some_and(|p| p.is_dir());
+        match &path {
+            None => toast::plain(
+                "EVE Chatterer can't find EVE's chat logs",
+                "Windows didn't say where your Documents folder is, so EVE's chat logs can't be found.",
+            ),
+            Some(_) if !found => toast::plain(
+                "Waiting for EVE's chat logs",
+                "Turn on \"Log chat to file\" in EVE's chat settings. Alerts start as soon as EVE writes its first chat log.",
+            ),
+            Some(p) => println!("watching {}", p.display()),
+        }
+        LogFolder { path, found }
+    }
+
+    fn check(&mut self) {
+        if self.found {
+            return;
+        }
+        if let Some(p) = self.path.as_ref().filter(|p| p.is_dir()) {
+            self.found = true;
+            println!("chat log folder appeared: {}", p.display());
+            toast::plain("Found EVE's chat logs", "Chat alerts are on.");
+        }
+    }
 }
 
 struct Runner {
     app: AppHandle,
-    /// Shared with `AppState::engine` so settings commands can reach in
-    /// (`get_settings_data` / `save_settings`); locked briefly once per tick.
-    engine: Arc<Mutex<Option<Engine>>>,
+    /// Shared with `AppState::engine` so settings commands can reach in;
+    /// locked briefly once per tick.
+    engine: Arc<Mutex<Engine>>,
     sampler: Sampler,
     governor: Governor,
     router_cfg: RouterConfig,
-    pilots_path: PathBuf,
+    logs: LogFolder,
     last_client_log: Option<Instant>,
 }
 
 pub fn spawn(app: AppHandle) {
     let result = std::thread::Builder::new().name("core-runner".into()).spawn(move || {
-        if let Err(e) = run(app.clone()) {
-            eprintln!("the core stopped: {e}");
-            notify(&app, "EVE Chatterer is not watching", &e);
-            app.state::<AppState>().status.lock().unwrap().running = false;
-        }
+        let engine = app.state::<AppState>().engine.clone();
+        let mut r = Runner {
+            app,
+            engine,
+            sampler: Sampler::new(),
+            governor: Governor::new(),
+            router_cfg: RouterConfig::default(),
+            logs: LogFolder::new(),
+            last_client_log: None,
+        };
+        r.run_loop()
     });
     if let Err(e) = result {
         eprintln!("could not start the core thread: {e}");
+        toast::plain("EVE Chatterer is not watching", &format!("Its background thread couldn't start: {e}"));
     }
-}
-
-fn run(app: AppHandle) -> Result<(), String> {
-    let cfg_dir = crate::storage::config_dir();
-    let settings = Settings::load(&cfg_dir.join("settings.json")).unwrap_or_else(|e| {
-        eprintln!("could not read settings.json, using the defaults: {e}");
-        Settings::with_defaults()
-    });
-    let pilots_path = cfg_dir.join("pilots.json");
-    let pilots = PilotRegistry::load(&pilots_path).unwrap_or_else(|e| {
-        eprintln!("could not read pilots.json, starting empty: {e}");
-        PilotRegistry::default()
-    });
-    let dir = paths::chatlogs_dir().ok_or("Could not find Documents\\EVE\\logs\\Chatlogs. Is chat logging turned on in EVE?")?;
-    let engine_slot = app.state::<AppState>().engine.clone();
-    *engine_slot.lock().unwrap() = Some(Engine::new(&dir, EngineConfig::default(), pilots, SettingsBook::new(settings)));
-    {
-        let state = app.state::<AppState>();
-        let mut st = state.status.lock().unwrap();
-        st.log_folder = Some(dir.display().to_string());
-        st.running = true;
-    }
-
-    let mut r = Runner {
-        engine: engine_slot,
-        sampler: Sampler::new(),
-        governor: Governor::new(),
-        router_cfg: RouterConfig::default(),
-        pilots_path,
-        app,
-        last_client_log: None,
-    };
-    r.run_loop()
 }
 
 impl Runner {
     fn run_loop(&mut self) -> ! {
         let mut last_tick: Option<Instant> = None;
+        let app = self.app.clone();
+        let state = app.state::<AppState>();
         loop {
             let now = Instant::now();
             let snap = self.sampler.sample(now);
-            *self.app.state::<AppState>().last_snapshot.lock().unwrap() = Some(snap.clone());
-            self.app.state::<AppState>().overlays.follow(&self.app, &snap);
+            *state.last_snapshot.lock().unwrap() = Some(snap.clone());
+            state.overlays.follow(&snap);
             if last_tick.is_none_or(|t| now.duration_since(t) >= TICK_EVERY) {
                 last_tick = Some(now);
+                self.logs.check();
                 let names: Vec<&str> = snap.clients.iter().map(|c| c.character.as_str()).collect();
                 if self.last_client_log.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(30)) {
                     self.last_client_log = Some(now);
                     println!("clients: {}  focused: {:?}", snap.clients.iter().map(|c| format!("{}[{}]", c.character, if c.on_screen() {"on-screen"} else if c.minimized {"minimized"} else {"hidden"})).collect::<Vec<_>>().join(", "), snap.focused);
                 }
                 let events = {
-                    let mut guard = self.engine.lock().unwrap();
-                    let engine = guard.as_mut().expect("engine is set before run_loop starts");
+                    let mut engine = self.engine.lock().unwrap();
                     let mut events = engine.observe_clients(&names, now);
                     events.extend(engine.tick(now));
                     events
@@ -229,22 +246,10 @@ impl Runner {
                 for ev in events {
                     self.handle(ev, &snap, now);
                 }
-                self.publish_pilots();
             }
-            self.app.state::<AppState>().overlays.reap();
+            state.overlays.reap();
             std::thread::sleep(SAMPLE_EVERY);
         }
-    }
-
-    fn publish_pilots(&self) {
-        let state = self.app.state::<AppState>();
-        let guard = self.engine.lock().unwrap();
-        let engine = guard.as_ref().expect("engine is set before run_loop starts");
-        let mut st = state.status.lock().unwrap();
-        st.pilots = engine.pilots().iter().map(|p| PilotView { id: p.id.clone(), name: p.name.clone(), live: p.live }).collect();
-        st.pilots.sort_by(|a, b| b.live.cmp(&a.live).then_with(|| a.name.cmp(&b.name)));
-        st.alerts_shown = state.alerts_shown.load(Ordering::Relaxed);
-        st.overlay_windows = state.overlays.window_count();
     }
 
     fn handle(&mut self, ev: Event, snap: &Snapshot, now: Instant) {
@@ -267,21 +272,19 @@ impl Runner {
             }
             Event::NewPilot(p) => {
                 self.save_pilots();
-                notify(&self.app, &format!("New character: {}", p.name), "Chat alerts are on for this character. Open EVE Chatterer from the tray to adjust them.");
+                toast::plain(&format!("New character: {}", p.name), "Chat alerts are on for this character. Open EVE Chatterer from the tray to adjust them.");
             }
             Event::PilotInLogs(_) | Event::PilotUpdated { .. } => self.save_pilots(),
             Event::ChatLoggingOff { name } => {
-                notify(&self.app, &format!("No chat log for {name}"), "Turn on \"Log chat to file\" in EVE's chat settings so alerts can work for this character.");
+                toast::plain(&format!("No chat log for {name}"), "Turn on \"Log chat to file\" in EVE's chat settings so alerts can work for this character.");
             }
             Event::Discovery(_) => {}
         }
     }
 
     fn save_pilots(&self) {
-        let guard = self.engine.lock().unwrap();
-        let engine = guard.as_ref().expect("engine is set before run_loop starts");
-        if let Err(e) = engine.pilots().save(&self.pilots_path) {
-            eprintln!("could not save pilots.json: {e}");
+        if let Err(e) = state::save_pilots(&self.engine.lock().unwrap()) {
+            eprintln!("{e}");
         }
     }
 
@@ -294,101 +297,105 @@ impl Runner {
         let Some(d) = asking.iter().find(|d| matches!(d.reason, Reason::OwnName)).or(asking.first()) else {
             return;
         };
-        let settings = {
-            let guard = self.engine.lock().unwrap();
-            guard.as_ref().expect("engine is set before run_loop starts").settings().settings().audio.clone()
-        };
+        let settings = self.engine.lock().unwrap().settings().settings().audio.clone();
         if let Some(source) = settings.source_for(d.pilot_id.as_deref()) {
             audio::alert(source, settings.gain(), settings.cooldown(), matches!(d.reason, Reason::OwnName));
         }
     }
 
     fn pilot_id_by_name(&self, name: &str) -> Option<String> {
-        let guard = self.engine.lock().unwrap();
-        guard.as_ref()?.pilots().by_name(name).map(|p| p.id.clone())
+        self.engine.lock().unwrap().pilots().by_name(name).map(|p| p.id.clone())
     }
 
     fn deliver(&self, alert: &Alert, d: &Decision, snap: &Snapshot) {
-        let state = self.app.state::<AppState>();
         match &d.outcome {
             Outcome::Deliver(deliveries) => {
                 for delivery in deliveries {
                     match delivery {
-                        Delivery::Overlay { anchor, style } => {
-                            let Some((monitor, region, owner)) = placement(&self.app, *anchor, snap) else {
-                                println!("       could not place the overlay: anchor={anchor:?} had no monitor");
-                                continue;
-                            };
-                            println!("       showing {style:?} on monitor ({},{})-({},{})", monitor.left, monitor.top, monitor.right, monitor.bottom);
-                            let (reason, tone) = reason_text(&d.reason);
-                            // Position, width and window belong to the client the
-                            // alert is drawn over, whoever it is for: an alert for
-                            // Psianna shown on Ceryph's screen (the one being looked
-                            // at) lands in Ceryph's box, in Ceryph's stack (owner
-                            // decision 2026-09-30). The alerted pilot is still named
-                            // on the alert. No client under it: the alerted pilot's.
-                            let host = owner.and_then(|h| snap.clients.iter().find(|c| c.hwnd == h)).map(|c| c.character.clone());
-                            let (host_id, host_name) = match host {
-                                Some(name) => (self.pilot_id_by_name(&name), name),
-                                None => (d.pilot_id.clone(), d.pilot_name.clone()),
-                            };
-                            let saved = placement_for(&self.app, host_id.as_deref());
-                            let width = saved.map(|p| p.width).unwrap_or(overlay::DEFAULT_OVERLAY_WIDTH);
-                            // Relative to whatever region the router picked (the
-                            // client window, or its monitor when fullscreen), so it
-                            // always lands inside the game (overlay.rs, OverlayPlacement).
-                            let custom_pos = saved;
-                            let key = overlay::overlay_key(host_id.as_deref(), &host_name);
-                            state.overlays.show(
-                                &self.app,
-                                &key,
-                                overlay::Placement { monitor, region, width, custom_pos, owner },
-                                OverlayAlert {
-                                    id: state.overlays.next_id(),
-                                    style: style_name(*style),
-                                    pilot: d.pilot_name.clone(),
-                                    tag: tag_for(&self.app, d.pilot_id.as_deref(), &d.pilot_name),
-                                    accent: accent_for(&d.pilot_name),
-                                    channel: channel_label(alert.kind, &alert.channel_name),
-                                    channel_id: alert.channel_id.clone(),
-                                    sender: alert.line.sender.clone(),
-                                    text: alert.line.text.clone(),
-                                    reason,
-                                    tone,
-                                    lifetime_ms: lifetime_ms(*style),
-                                    count: 1,
-                                    stack_up: false,
-                                },
-                            );
-                            state.alerts_shown.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Delivery::Toast { switch_to, style } => {
-                            let (reason, tone) = reason_text(&d.reason);
-                            toast::chat(ChatToast {
-                                key: toast::key_for(switch_to, &alert.channel_name, matches!(d.reason, Reason::OwnName)),
-                                pilot: switch_to.clone(),
-                                tag: tag_for(&self.app, d.pilot_id.as_deref(), switch_to),
-                                accent: accent_for(switch_to),
-                                tone,
-                                sender: alert.line.sender.clone(),
-                                channel: channel_label(alert.kind, &alert.channel_name),
-                                text: alert.line.text.clone(),
-                                reason,
-                                style: style_name(*style),
-                                mention: matches!(d.reason, Reason::OwnName),
-                            });
-                            state.alerts_shown.fetch_add(1, Ordering::Relaxed);
-                        }
+                        Delivery::Overlay { anchor, style } => self.overlay(alert, d, snap, *anchor, *style, false),
+                        Delivery::Toast { switch_to, style } => toast::chat(self.chat_toast(alert, d, switch_to, *style)),
                         Delivery::Sound => {} // once per alert, not per character: `sound`
                     }
                 }
             }
-            Outcome::Limited(OverCap::Fold) => {
-                state.overlays.fold(&self.app, Fold { pilot: d.pilot_name.clone(), channel_id: alert.channel_id.clone() });
-                // And the notification, if the recent alerts went there.
-                toast::fold(&toast::key_for(&d.pilot_name, &alert.channel_name, matches!(d.reason, Reason::OwnName)));
+            // Over a rate cap: into the count of the alert already showing
+            // where this one would have gone, or shown as a Strip when
+            // nothing is there to fold into, so a capped line is never lost.
+            Outcome::Limited { over: OverCap::Fold, deliveries } => {
+                for delivery in deliveries {
+                    match delivery {
+                        Delivery::Overlay { anchor, .. } => self.overlay(alert, d, snap, *anchor, OverlayStyle::Strip, true),
+                        Delivery::Toast { switch_to, .. } => toast::fold(self.chat_toast(alert, d, switch_to, OverlayStyle::Strip)),
+                        Delivery::Sound => {}
+                    }
+                }
             }
-            Outcome::Limited(OverCap::Drop) | Outcome::Suppressed(_) => {}
+            Outcome::Limited { over: OverCap::Drop, .. } | Outcome::Suppressed(_) => {}
+        }
+    }
+
+    fn overlay(&self, alert: &Alert, d: &Decision, snap: &Snapshot, anchor: Anchor, style: OverlayStyle, fold: bool) {
+        let Some((monitor, region, owner)) = placement(&self.app, anchor, snap) else {
+            println!("       could not place the overlay: anchor={anchor:?} had no monitor");
+            return;
+        };
+        println!("       showing {style:?} on monitor ({},{})-({},{})", monitor.left, monitor.top, monitor.right, monitor.bottom);
+        let (reason, tone) = reason_text(&d.reason);
+        // Position, width and window belong to the client the alert is drawn
+        // over, whoever it is for: an alert for one character shown on
+        // another's screen (the one being looked at) lands in that client's
+        // box, in its stack (owner decision 2026-09-30). The alerted pilot is
+        // still named on the alert. No client under it: the alerted pilot's.
+        let host = owner.and_then(|h| snap.clients.iter().find(|c| c.hwnd == h)).map(|c| c.character.clone());
+        let (host_id, host_name) = match host {
+            Some(name) => (self.pilot_id_by_name(&name), name),
+            None => (d.pilot_id.clone(), d.pilot_name.clone()),
+        };
+        let saved = placement_for(&self.app, host_id.as_deref());
+        let width = saved.map(|p| p.width).unwrap_or(overlay::DEFAULT_OVERLAY_WIDTH);
+        let key = overlay::overlay_key(host_id.as_deref(), &host_name);
+        // Relative to whatever region the router picked (the client window, or
+        // its monitor when fullscreen), so it always lands inside the game.
+        let p = overlay::Placement { monitor, region, width, custom_pos: saved, owner };
+        let overlays = &self.app.state::<AppState>().overlays;
+        let shown = OverlayAlert {
+            id: overlays.next_id(),
+            style: style_name(style),
+            pilot: d.pilot_name.clone(),
+            tag: tag_for(&self.app, d.pilot_id.as_deref(), &d.pilot_name),
+            accent: accent_for(&d.pilot_name),
+            channel: channel_label(alert.kind, &alert.channel_name),
+            channel_id: alert.channel_id.clone(),
+            sender: alert.line.sender.clone(),
+            text: alert.line.text.clone(),
+            reason,
+            tone,
+            lifetime_ms: lifetime_ms(style),
+            count: 1,
+            stack_up: false,
+        };
+        if fold {
+            overlays.fold(&self.app, &key, p, shown);
+        } else {
+            overlays.show(&self.app, &key, p, shown);
+        }
+    }
+
+    fn chat_toast(&self, alert: &Alert, d: &Decision, switch_to: &str, style: OverlayStyle) -> ChatToast {
+        let (reason, tone) = reason_text(&d.reason);
+        let mention = matches!(d.reason, Reason::OwnName);
+        ChatToast {
+            key: toast::key_for(switch_to, &alert.channel_name, mention),
+            pilot: switch_to.to_string(),
+            tag: tag_for(&self.app, d.pilot_id.as_deref(), switch_to),
+            accent: accent_for(switch_to),
+            tone,
+            sender: alert.line.sender.clone(),
+            channel: channel_label(alert.kind, &alert.channel_name),
+            text: alert.line.text.clone(),
+            reason,
+            style: style_name(style),
+            mention,
         }
     }
 }

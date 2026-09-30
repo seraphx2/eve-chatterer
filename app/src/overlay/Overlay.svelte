@@ -5,7 +5,7 @@
   import Beacon from "./Beacon.svelte";
   import Panel from "./Panel.svelte";
   import Strip from "./Strip.svelte";
-  import type { Alert, Fold, RepositionInfo, Style, Tone } from "./types";
+  import type { Alert, RepositionInfo, Style, Tone } from "./types";
 
   /** How many alerts may be on screen at once in this window. */
   const MAX_VISIBLE = 5;
@@ -42,10 +42,13 @@
     }
   }
 
-  /** A line past the pilot's rate cap: bump the count of the latest matching alert. */
-  function fold(f: Fold) {
-    const target = [...alerts].filter((a) => a.pilot === f.pilot && a.channelId === f.channelId).sort((x, y) => y.id - x.id)[0];
+  /** A line past the pilot's rate cap: bump the count of the newest alert for
+   * that pilot and channel if one is showing, otherwise show it (the host
+   * sends it as a Strip), so a capped line is never lost. */
+  function fold(a: Alert) {
+    const target = [...alerts].filter((x) => x.pilot === a.pilot && x.channelId === a.channelId).sort((x, y) => y.id - x.id)[0];
     if (target) target.count += 1;
+    else add(a);
   }
 
   /** A stand-in alert, so the placeholder previews exactly what a real one will look like at this width. */
@@ -132,7 +135,7 @@
     const win = getCurrentWebviewWindow();
     (async () => {
       const un1 = await win.listen<Alert>("overlay:alert", (e) => add(e.payload));
-      const un2 = await win.listen<Fold>("overlay:fold", (e) => fold(e.payload));
+      const un2 = await win.listen<Alert>("overlay:fold", (e) => fold(e.payload));
       const un3 = await win.listen<RepositionInfo>("overlay:reposition-enter", (e) => (reposition = e.payload));
       const un4 = await win.listen("overlay:reposition-exit", () => (reposition = null));
       if (disposed) {

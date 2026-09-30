@@ -25,11 +25,6 @@ export interface Alert {
   stackUp: boolean;
 }
 
-export interface Fold {
-  pilot: string;
-  channelId: string;
-}
-
 /** Mirrors `RepositionInfo` in src-tauri/src/overlay.rs. */
 export interface RepositionInfo {
   name: string;

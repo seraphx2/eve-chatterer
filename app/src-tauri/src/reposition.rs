@@ -39,11 +39,7 @@ pub fn toggle(app: &AppHandle) {
 fn enter(app: &AppHandle) {
     let state = app.state::<AppState>();
     let targets: Vec<RepositionTarget> = {
-        let guard = state.engine.lock().unwrap();
-        let Some(engine) = guard.as_ref() else {
-            *state.repositioning.lock().unwrap() = false;
-            return;
-        };
+        let engine = state.engine.lock().unwrap();
         // Only the character the player is actually looking at: the focused
         // client, or (focus elsewhere, e.g. on the settings window) every
         // client on screen. Offline alts and hidden clients would all pile up
@@ -91,8 +87,7 @@ fn exit(app: &AppHandle) {
     let state = app.state::<AppState>();
     let results = state.overlays.exit_reposition(app);
     println!("[reposition] exiting, {} window(s) to save", results.len());
-    let mut guard = state.engine.lock().unwrap();
-    let Some(engine) = guard.as_mut() else { return };
+    let mut engine = state.engine.lock().unwrap();
     for (key, placement) in results {
         // `None` here means the read-back failed (e.g. the window vanished
         // mid-session) rather than "the user wants this cleared" - leave
@@ -103,7 +98,7 @@ fn exit(app: &AppHandle) {
         let Some(id) = key.strip_prefix("id:") else { continue };
         engine.pilots_mut().set_placement(id, Some(placement));
     }
-    if let Err(e) = engine.pilots().save(&crate::storage::config_dir().join("pilots.json")) {
-        eprintln!("could not save pilots.json after reposition: {e}");
+    if let Err(e) = crate::state::save_pilots(&engine) {
+        eprintln!("{e}");
     }
 }

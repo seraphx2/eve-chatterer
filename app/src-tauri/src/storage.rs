@@ -45,6 +45,14 @@ pub fn config_dir() -> PathBuf {
     get().config.clone()
 }
 
+pub fn settings_path() -> PathBuf {
+    get().config.join("settings.json")
+}
+
+pub fn pilots_path() -> PathBuf {
+    get().config.join("pilots.json")
+}
+
 pub fn cache_dir() -> PathBuf {
     get().cache.clone()
 }
