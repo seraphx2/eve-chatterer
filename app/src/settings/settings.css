@@ -454,6 +454,14 @@ label.check input {
 .chip.regex-chip {
   font-family: "Consolas", "SFMono-Regular", ui-monospace, monospace;
 }
+/* A pattern that doesn't compile: matching skips it until it's fixed. */
+.chip.bad-chip {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.chip.bad-chip .chip-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+}
 /* Shared between a regex chip's own delimiters and the Add dialog's input
    decoration, so a pattern reads the same way in both places. */
 .regex-delim {

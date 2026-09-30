@@ -13,6 +13,8 @@
   let data = $state<SettingsData | null>(null);
   let loadError = $state("");
   let saveError = $state("");
+  // Saved, but some tracked patterns don't compile and are skipped.
+  let saveWarning = $state("");
   let dirty = $state(false); // an edit exists that the last save doesn't reflect yet
   let saving = $state(false); // a save_settings call is in flight right now
 
@@ -54,7 +56,8 @@
     saving = true;
     saveError = "";
     try {
-      await invoke("save_settings", { settings: data.settings });
+      const bad = await invoke<string[]>("save_settings", { settings: data.settings });
+      saveWarning = bad.length > 0 ? `Saved. ${bad.length === 1 ? "This pattern doesn't" : "These patterns don't"} work and ${bad.length === 1 ? "is" : "are"} skipped until fixed: ${bad.join(", ")}` : "";
       dirty = false;
     } catch (e) {
       saveError = String(e);
@@ -203,7 +206,9 @@
     </main>
     {#if data}
       <div class="savebar">
-        <span class="msg" class:error={!!saveError}>{saveError || (saving ? "Saving…" : dirty ? "Unsaved changes" : "All changes saved")}</span>
+        <span class="msg" class:error={!!saveError || (!!saveWarning && !dirty && !saving)}
+          >{saveError || (saving ? "Saving…" : dirty ? "Unsaved changes" : saveWarning || "All changes saved")}</span
+        >
       </div>
     {/if}
   </div>
