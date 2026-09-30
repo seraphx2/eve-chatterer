@@ -6,7 +6,7 @@ Line numbers refer to that commit; function names are given so each spot can sti
 
 ## Plan (agreed with the owner 2026-09-30)
 
-- **Before the next release:** H1–H5, M1, M4 and M5 are fixed, and the H6 measurement showed no problem (FINDINGS #16). What remains is the owner's check of the fixes with two clients.
+- **Before the next release:** H1–H5, M1, M4, M5 and M9 are fixed, the H6 measurement showed no problem (FINDINGS #16), and the owner checked the fixes with two clients.
 - **H4 decision (owner, 2026-09-30):** own-name mentions skip rate caps and don't count toward them.
 - **Everything else:** after the release.
 
@@ -61,15 +61,6 @@ Line numbers refer to that commit; function names are given so each spot can sti
   - The number input always writes `over: "fold"`, turning a hand-set Drop into Fold.
   - "default" shows the first (least specific) cap, not the strictest.
 - **Fix:** show the effective limit (the strictest inherited cap), say that a higher number has no effect, and keep the stored `over`.
-
-### M9. The release job exposes the updater signing key to actions pinned only by tag
-
-- **Where:** `.github/workflows/release.yml:56-99`.
-- **What:**
-  - `tauri-apps/tauri-action@v1`, `Swatinem/rust-cache@v2`, `dtolnay/rust-toolchain@stable` and `actions/*@v7` all run in the job that has `TAURI_SIGNING_PRIVATE_KEY`.
-  - If a tag of any third-party action is moved, it could read the key, and whoever holds the key can ship updates every installed copy accepts.
-  - The npm build also runs with the key in its environment (tauri-action runs `beforeBuildCommand`).
-- **Fix:** pin actions to full commit SHAs; Dependabot already watches github-actions and keeps pinned SHAs current. The key is already scoped to the tauri-action step; keep it that way.
 
 ## Low
 
