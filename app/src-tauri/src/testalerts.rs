@@ -138,22 +138,36 @@ pub fn soak(app: &AppHandle) {
 /// client tie that client's input to our UI thread? Every 8 s, one alert of
 /// each style over every on-screen EVE client, owned by it exactly like a
 /// real alert (unlike `--selftest` and `--soak`, whose windows have no
-/// owner); at 30, 60 and 90 s the UI thread is blocked for 5 s. Move the
-/// camera and type in EVE during each printed freeze: if EVE stalls with it,
-/// the input queues are attached. Exits at 120 s. The printed wall-clock
-/// times line up with a PresentMon capture run alongside.
+/// owner). At 30, 60 and 90 s the UI thread is blocked for 5 s. Everything
+/// the player needs is in the game, since the console may be on another
+/// virtual desktop: a Beacon over each client 3 s before a freeze, one chime
+/// as it starts and two as it ends (sound plays on its own thread). Move the
+/// camera and type in EVE between the chimes: if EVE stalls with us, the
+/// input queues are attached. Exits at 120 s. Every step, with wall-clock
+/// times to line up with a PresentMon capture, is also written to
+/// `%TEMP%\eve-chatterer-freezetest.log`.
 pub fn freezetest(app: &AppHandle) {
+    use eve_chatterer_core::audio::Source;
+    use std::io::Write;
     let app = app.clone();
     std::thread::spawn(move || {
         let t0 = Instant::now();
+        let log_path = std::env::temp_dir().join("eve-chatterer-freezetest.log");
+        let _ = std::fs::write(&log_path, "");
         let log = |what: &str| {
-            println!("[freezetest +{:>5.1}s {}] {what}", t0.elapsed().as_secs_f32(), wall_clock());
-            crate::diag::diag(format!("freezetest: {what}"));
+            let line = format!("[freezetest +{:>5.1}s {}] {what}", t0.elapsed().as_secs_f32(), wall_clock());
+            println!("{line}");
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+                let _ = writeln!(f, "{line}");
+            }
         };
+        let chime = || crate::audio::preview(Source::BuiltIn, 0.5);
+        let pilot = pilot_name(&app);
         let freezes = [30u64, 60, 90].map(Duration::from_secs);
-        let mut next_freeze = 0;
+        let (mut next_warning, mut next_freeze) = (0, 0);
         let mut next_alerts = Duration::from_secs(3);
         let mut round = 0;
+        log(&format!("started; log in {}", log_path.display()));
         loop {
             let elapsed = t0.elapsed();
             if elapsed >= Duration::from_secs(120) {
@@ -161,9 +175,23 @@ pub fn freezetest(app: &AppHandle) {
                 app.exit(0);
                 return;
             }
+            if freezes.get(next_warning).is_some_and(|&at| elapsed + Duration::from_secs(3) >= at) {
+                next_warning += 1;
+                let heads_up = || {
+                    vec![OverlayAlert {
+                        sender: "Freeze test".into(),
+                        text: "EVE Chatterer freezes in 3 seconds, for 5. Move the camera and type in chat from the first chime until the two chimes.".into(),
+                        reason: format!("Freeze {next_warning} of 3"),
+                        ..alert(&app, &pilot, OverlayStyle::Beacon, 0)
+                    }]
+                };
+                let n = over_every_client(&app, heads_up);
+                log(&format!("heads-up for freeze {next_warning} shown over {n} client(s)"));
+            }
             if freezes.get(next_freeze).is_some_and(|&at| elapsed >= at) {
                 next_freeze += 1;
-                log("UI thread blocked for 5 s: move the camera and type in EVE now");
+                log(&format!("freeze {next_freeze} of 3 starts: UI thread blocked for 5 s"));
+                chime();
                 let (tx, rx) = std::sync::mpsc::channel();
                 let blocked = app.run_on_main_thread(move || {
                     std::thread::sleep(Duration::from_secs(5));
@@ -172,36 +200,37 @@ pub fn freezetest(app: &AppHandle) {
                 if blocked.is_ok() {
                     let _ = rx.recv();
                 }
-                log("UI thread free again");
+                log(&format!("freeze {next_freeze} of 3 ends: UI thread free again"));
+                chime();
+                std::thread::sleep(Duration::from_millis(800));
+                chime();
             }
             if elapsed >= next_alerts {
                 next_alerts += Duration::from_secs(8);
-                let shown = on_every_client(&app, round);
+                let styles = [(OverlayStyle::Strip, 4), (OverlayStyle::Panel, 1), (OverlayStyle::Beacon, 0)];
+                let n = over_every_client(&app, || styles.iter().map(|&(style, i)| alert(&app, &pilot, style, i + round)).collect());
+                log(&format!("round {round}: alerts over {n} on-screen client(s)"));
                 round += 1;
-                if shown == 0 {
-                    log("no EVE client on screen: nothing to own an overlay");
-                }
             }
             std::thread::sleep(Duration::from_millis(100));
         }
     });
 }
 
-/// One alert of each style over every on-screen EVE client, owned by that
-/// client like a real alert. Returns how many clients got them.
-fn on_every_client(app: &AppHandle, round: usize) -> usize {
+/// Shows `alerts()` over every EVE client on the current desktop, owned by
+/// that client like a real alert. Returns how many clients got them.
+fn over_every_client(app: &AppHandle, alerts: impl Fn() -> Vec<OverlayAlert>) -> usize {
     let clients: Vec<_> = {
         let state = app.state::<AppState>();
         let snap = state.last_snapshot.lock().unwrap();
         snap.as_ref().map(|s| s.clients.iter().filter(|c| c.on_screen()).cloned().collect()).unwrap_or_default()
     };
-    let pilot = pilot_name(app);
     for c in &clients {
         let Some(monitor) = c.monitor else { continue };
         let key = format!("test-client-{}", c.hwnd);
         let p = crate::overlay::Placement { monitor, region: c.rect.unwrap_or(monitor), width: crate::overlay::DEFAULT_OVERLAY_WIDTH, custom_pos: None, owner: Some(c.hwnd) };
-        for (style, i) in [(OverlayStyle::Strip, 4), (OverlayStyle::Panel, 1), (OverlayStyle::Beacon, 0)] {
-            app.state::<AppState>().overlays.show(app, &key, p, alert(app, &pilot, style, i + round));
+        for a in alerts() {
+            app.state::<AppState>().overlays.show(app, &key, p, a);
         }
     }
     clients.len()

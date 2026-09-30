@@ -17,11 +17,12 @@ Line numbers refer to that commit; function names are given so each spot can sti
 - **Where:** `app/src-tauri/src/overlay.rs` (`platform::set_owner`), and DESIGN "Overlays belong to their EVE client".
 - **What:** making EVE's window the owner of our overlay creates a cross-process owner/owned relationship, and Windows then attaches the input queues of the two threads (Raymond Chen, "Is it legal to have a cross-process parent/child or owner/owned window relationship?", The Old New Thing). If that holds here, EVE's input on that client can stall whenever our UI thread stops pumping messages: a hang, WebView2 building a window (0.4 s cold), or any long piece of work on that thread. Keyboard and focus state are shared too.
 - **Gap:** FINDINGS #15 measured frame times with `--selftest` / `--soak`, whose overlays are created with `owner: None` (`testalerts.rs`). The owned path has never been measured.
-- **Measurement:** run the app with `--freezetest` and both clients on screen.
-  1. Every 8 s it shows one alert of each style over every on-screen client, owned by it like a real alert.
-  2. At 30, 60 and 90 s it blocks our UI thread for 5 s, printing each window with the wall-clock time. Move the camera and type in EVE during each one.
-  3. Repeat with PresentMon running, and compare frame times at the printed times.
-  4. Record both in FINDINGS.
+- **Measurement:** run the app with `--freezetest`, then switch to the desktop with the EVE clients.
+  1. Every 8 s it shows one alert of each style over every client on that desktop, owned by it like a real alert.
+  2. At 30, 60 and 90 s it blocks our UI thread for 5 s. A Beacon over each client warns 3 s ahead, one chime marks the start and two the end. Move the camera and type in EVE chat between the chimes.
+  3. Afterwards, `%TEMP%\eve-chatterer-freezetest.log` confirms how many clients had overlays at each round and gives wall-clock times, to compare frame times in a PresentMon capture run alongside.
+  4. Record the result in FINDINGS.
+- **First run (2026-09-30):** no stutter noticed, but inconclusive: the prompts were on the console on another virtual desktop, so the freezes weren't timed with camera movement, and no log recorded whether overlays were over the clients. The in-game cues and the log were added for that.
 
   If input does stall, the owner decides between keeping ownership (and guaranteeing the UI thread never blocks) and going back to topmost windows with our own z-order and cloak handling.
 
