@@ -11,6 +11,16 @@ Releases are unsigned today (the README covers SmartScreen's "Run anyway"). The 
 - **Protection:** fork PR workflows require approval for all outside contributors (set 2026-09-29), because PR runs use the PR's workflow files and could otherwise target the runner by label. Never approve a PR touching `.github/`.
 - **Build:** Tauri's `bundle.windows.signCommand` (signtool with the Certum cert) signs the app exe before bundling and the installer after, so the updater `.sig` is made from the signed installer. The job fails fast if the certificate isn't reachable (SimplySign logged out). Test with a draft release first. Only `release.yml` moves to the runner; CI stays on GitHub's machines.
 
+## Localization: translating the app (owner request 2026-09-30)
+
+- **Languages:** EVE's own: English, German, French, Russian, Japanese, Chinese (Simplified), Korean, Spanish. After English, Russian, German and Chinese matter most by player numbers.
+- **Two places hold text, both need it:** the Svelte UI (Settings, overlay labels such as "Mentioned you") and the Rust side (notification text and buttons, `runner::reason_text`, tray menu, update and chat-logging messages).
+- **Approach:** extract every hard-coded string into translation keys as one piece of work (a few hundred, mostly Settings). Frontend via a build-time-checked library (Paraglide suits Svelte); Rust reads the same translation files so both sides stay in step. Language follows Windows' display language, with an override in Settings > General.
+- **Translations:** Claude drafts every language first (decent, not native; EVE jargon needs care), then a free open-source platform (Weblate or Crowdin) lets players correct them without touching code.
+- **Watch for:** longer strings (German) wrapping or cropping in Settings rows and overlays; Japanese/Chinese/Korean need system-font fallback since Barlow lacks those characters; plurals ("3 lines") and dates per language.
+- **Plan:** plumbing and extraction once, then ship English plus drafted Russian, German and Chinese; the rest follow as files.
+- Separate from reading non-English *logs* (Open questions below), which needs a real sample first.
+
 ## Measurements still open
 
 - Overlay frame-time impact on EVE (FINDINGS #9 only has GPU utilization): needs a present-level capture such as PresentMon, with both clients in a static scene so EVE's own load does not swamp the effect. Also whether an idle open overlay window costs the compositor anything.
