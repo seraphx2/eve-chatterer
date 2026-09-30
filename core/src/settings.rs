@@ -19,8 +19,8 @@
 use crate::audio::AudioSettings;
 use crate::channel::ChannelKind;
 use crate::prefs::{DeliveryMode, LayerKey, Mode, OverCap, OverlayStyle, Prefs, RateCap, Suppression};
-use crate::rules::{CompiledRules, RuleSet, TrackedTerm};
-use regex::Regex;
+use crate::rules::{compile_pattern, CompiledRules, RuleSet, TrackedTerm};
+use crate::store;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -139,6 +139,25 @@ pub struct Settings {
     pub pilots: BTreeMap<String, PilotSettings>,
     /// Which sound plays (the Audio page); app-wide, not layered.
     pub audio: AudioSettings,
+    /// App-wide options from the General page; not layered.
+    pub general: GeneralSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GeneralSettings {
+    /// The global hotkey that toggles overlay reposition mode, as an
+    /// accelerator string ("Ctrl+Alt+O"). Registered by the app at startup
+    /// and whenever it's changed.
+    pub reposition_hotkey: String,
+}
+
+pub const DEFAULT_REPOSITION_HOTKEY: &str = "Ctrl+Alt+O";
+
+impl Default for GeneralSettings {
+    fn default() -> Self {
+        GeneralSettings { reposition_hotkey: DEFAULT_REPOSITION_HOTKEY.to_string() }
+    }
 }
 
 /// The fully resolved behavior for one (pilot, channel).
@@ -146,8 +165,6 @@ pub struct Resolved {
     pub mode: Mode,
     pub rules: CompiledRules,
     pub prefs: Prefs,
-    /// Regexes that failed to compile and were skipped, so the UI can say so.
-    pub bad_regexes: Vec<String>,
 }
 
 impl Settings {
@@ -277,21 +294,13 @@ impl Settings {
                 TrackedKind::Regex => rules.regexes.push(term),
             }
         }
-        let mut good = Vec::with_capacity(rules.regexes.len());
-        let mut bad_regexes = Vec::new();
-        for t in rules.regexes {
-            if t.text.trim().is_empty() || Regex::new(&format!("(?i){}", t.text)).is_ok() {
-                good.push(t);
-            } else {
-                bad_regexes.push(t.text);
-            }
-        }
-        rules.regexes = good;
-        let rules = CompiledRules::compile(&rules).unwrap_or_else(|_| CompiledRules::compile(&RuleSet::default()).unwrap());
-        Resolved { mode, rules, prefs, bad_regexes }
+        // A pattern that doesn't compile is left out (the settings screen marks
+        // it); the rest still work.
+        let (rules, _) = CompiledRules::compile_skipping_bad(&rules);
+        Resolved { mode, rules, prefs }
     }
 
-    /// Every regex in every layer that does not compile, with where it is.
+    /// Every tracked regex, in any layer, that does not compile.
     pub fn invalid_regexes(&self) -> Vec<String> {
         let mut all: Vec<&Layer> = vec![&self.global];
         all.extend(self.kinds.values().chain(self.channels.values()));
@@ -303,24 +312,31 @@ impl Settings {
             .flat_map(|l| l.tracked.iter().flatten())
             .filter(|t| t.kind == TrackedKind::Regex)
             .map(|t| t.text.as_str())
-            .filter(|p| !p.trim().is_empty() && Regex::new(&format!("(?i){p}")).is_err())
+            .filter(|p| !p.trim().is_empty() && compile_pattern(p).is_err())
             .map(String::from)
             .collect()
     }
 
-    /// A missing file gives the built-in defaults (first run).
+    /// Reads a settings file strictly and changes nothing on disk (the CLI's
+    /// `--settings`). A missing file gives the built-in defaults.
     pub fn load(path: &Path) -> io::Result<Settings> {
-        match std::fs::read_to_string(path) {
-            Ok(s) => {
-                let mut loaded: Settings = serde_json::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                loaded.backfill_missing_kinds();
-                loaded.backfill_example_tracked();
-                loaded.drop_copies_of_defaults();
-                Ok(loaded)
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Settings::with_defaults()),
-            Err(e) => Err(e),
-        }
+        Ok(store::load(path)?.map_or_else(Settings::with_defaults, Settings::upgraded))
+    }
+
+    /// Reads the app's settings file. One that can't be read is kept aside
+    /// and the backup (or the defaults) used instead; the second value is
+    /// then a problem to tell the user about (`store::open`).
+    pub fn open(path: &Path) -> (Settings, Option<String>) {
+        let o = store::open(path);
+        (o.value.map_or_else(Settings::with_defaults, Settings::upgraded), o.problem)
+    }
+
+    /// Brings a file saved by an older version up to date.
+    fn upgraded(mut self) -> Settings {
+        self.backfill_missing_kinds();
+        self.backfill_example_tracked();
+        self.drop_copies_of_defaults();
+        self
     }
 
     /// Adds the shipped default for any kind that is not present *as a key*
@@ -378,14 +394,9 @@ impl Settings {
         }
     }
 
-    /// Writes to a temporary file and renames it over the target.
+    /// Never leaves a partial file behind (`store::save`).
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self).map_err(io::Error::other)?)?;
-        std::fs::rename(&tmp, path)
+        store::save(path, self)
     }
 }
 
@@ -506,8 +517,8 @@ mod tests {
     /// (only a mention alerts).
     fn sender_verdict(s: &Settings, pilot: &str, sender: &str) -> &'static str {
         let r = s.resolve(Some(pilot), ChannelKind::Local, "local");
-        let line = |text| r.rules.evaluate(&LineCtx { pilot_name: "Jarna", channel_name: "Local", sender, text });
-        match (line("nothing special"), line("hi Jarna")) {
+        let line = |text| r.rules.evaluate(&LineCtx { pilot_name: "Holden", channel_name: "Local", sender, text });
+        match (line("nothing special"), line("hi Holden")) {
             (Some(Reason::AlwaysSender(_)), _) => "always",
             (None, None) => "ignored",
             (None, Some(Reason::OwnName)) => "normal",
@@ -525,7 +536,7 @@ mod tests {
 
     /// Which keyword (if any) fires for this text in the resolved behavior.
     fn hit(r: &Resolved, text: &str) -> Option<String> {
-        match r.rules.evaluate(&LineCtx { pilot_name: "Jarna", channel_name: "X", sender: "Bob", text }) {
+        match r.rules.evaluate(&LineCtx { pilot_name: "Holden", channel_name: "X", sender: "Bob", text }) {
             Some(Reason::Keyword(k)) => Some(k),
             _ => None,
         }
@@ -586,7 +597,7 @@ mod tests {
         s.kinds.insert(ChannelKind::Local, Layer { mode: Some(Mode::Nothing), ..Layer::default() });
         let r = s.resolve(None, ChannelKind::Local, "local");
         assert_eq!(r.mode, Mode::Nothing);
-        let ctx = LineCtx { pilot_name: "Jarna", channel_name: "Local", sender: "Bob", text: "selling in jita" };
+        let ctx = LineCtx { pilot_name: "Holden", channel_name: "Local", sender: "Bob", text: "selling in jita" };
         assert_eq!(r.rules.evaluate_mode(&ctx, r.mode), None, "even_when_muted:false makes it respect the muted channel");
     }
 
@@ -662,7 +673,6 @@ mod tests {
             TrackedRule { text: r"\bgank\b".into(), kind: TrackedKind::Regex, only_in: vec![], even_when_muted: true },
         ]);
         let r = s.resolve(None, ChannelKind::Local, "local");
-        assert_eq!(r.bad_regexes, ["("]);
         assert!(matches!(
             r.rules.evaluate(&LineCtx { pilot_name: "J", channel_name: "L", sender: "B", text: "a gank here" }),
             Some(Reason::Regex(_))
@@ -673,7 +683,7 @@ mod tests {
     #[test]
     fn json_round_trips_and_accepts_partial_files() {
         let mut s = Settings::with_defaults();
-        s.pilots.entry("1216741999".into()).or_default().base.sound = Some(true);
+        s.pilots.entry("2112000001".into()).or_default().base.sound = Some(true);
         let text = serde_json::to_string_pretty(&s).unwrap();
         assert!(!text.contains("null"), "unset fields are omitted: {text}");
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), s);
@@ -693,6 +703,20 @@ mod tests {
         assert_eq!(Settings::load(&path).unwrap(), s);
         std::fs::write(&path, "nope").unwrap();
         assert!(Settings::load(&path).is_err());
+    }
+
+    #[test]
+    fn a_file_from_a_newer_version_is_kept_aside_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let newer = r#"{"kinds":{"local":{"mode":"a_mode_this_version_lacks"}}}"#;
+        std::fs::write(&path, newer).unwrap();
+        let (s, problem) = Settings::open(&path);
+        assert_eq!(s, Settings::with_defaults());
+        assert!(problem.is_some_and(|p| p.contains("settings.json")));
+        assert!(!path.exists(), "moved aside, so the next save can't overwrite it");
+        let kept = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).find(|e| e.file_name().to_string_lossy().contains(".corrupt-"));
+        assert_eq!(std::fs::read_to_string(kept.unwrap().path()).unwrap(), newer);
     }
 
     #[test]

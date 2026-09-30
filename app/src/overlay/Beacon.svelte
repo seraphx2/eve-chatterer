@@ -4,7 +4,7 @@
 </script>
 
 <article class="alert glass beacon" style="--life: {alert.lifetimeMs}ms">
-  <div class="top"><span class="why">{alert.reason}</span><span>{alert.pilot} in {alert.channel}</span></div>
+  <div class="top"><span class="why">{alert.reason}</span><span class="where">{alert.pilot} in {alert.channel}</span></div>
   <p class="sender">{alert.sender}</p>
   <p class="body">{alert.text}</p>
   <div class="foot">

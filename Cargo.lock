@@ -1190,6 +1190,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tempfile",
  "tiny-skia",
  "windows 0.61.3",
 ]
@@ -1218,6 +1219,7 @@ version = "0.1.0"
 dependencies = [
  "eve-chatterer-core",
  "notify",
+ "rodio",
  "windows 0.61.3",
 ]
 

@@ -11,7 +11,7 @@
 //! exactly one window to drag per character.
 
 use crate::diag::diag;
-use eve_chatterer_core::pilots::{OverlayPlacement, MAX_OVERLAY_WIDTH, MIN_OVERLAY_WIDTH};
+use eve_chatterer_core::pilots::{Edge, OverlayPlacement, MAX_OVERLAY_WIDTH, MIN_OVERLAY_WIDTH};
 use eve_chatterer_core::presence::{Rect, Snapshot};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -58,7 +58,11 @@ pub struct OverlayAlert {
     /// its name (`eve_chatterer_core::pilots::Pilot::display_tag`).
     pub tag: String,
     pub accent: String,
+    /// What the player sees (`runner::channel_label`).
     pub channel: String,
+    /// The log's channel id, for matching folds: labels can repeat (every
+    /// private conversation is "Private chat").
+    pub channel_id: String,
     pub sender: String,
     pub text: String,
     pub reason: String,
@@ -70,12 +74,6 @@ pub struct OverlayAlert {
     pub stack_up: bool,
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct Fold {
-    pub pilot: String,
-    pub channel: String,
-}
-
 /// Sent to a window entering reposition mode, so it can show a placeholder
 /// (dashed outline, name, drag/resize hints) instead of real alerts.
 #[derive(Serialize, Clone, Debug)]
@@ -84,6 +82,8 @@ pub struct RepositionInfo {
     pub name: String,
     pub tag: String,
     pub accent: String,
+    /// The hotkey that ends reposition mode, as set in Settings > General.
+    pub hotkey: String,
 }
 
 // Everything sent to an overlay page goes through the slot's queue until the
@@ -92,7 +92,9 @@ pub struct RepositionInfo {
 // reposition hotkey need several presses.
 enum Msg {
     Alert(OverlayAlert),
-    Fold(Fold),
+    /// A capped line: the page bumps the count of that pilot and channel's
+    /// alert if one is showing, and otherwise shows this one.
+    Fold(OverlayAlert),
     RepositionEnter(RepositionInfo),
     RepositionExit,
 }
@@ -129,7 +131,8 @@ pub struct Placement {
     pub monitor: Rect,
     pub region: Rect,
     pub width: f64,
-    pub custom_pos: Option<(f64, f64)>,
+    /// The character's saved spot (only `fx`, `fy` and `edge` are used here).
+    pub custom_pos: Option<OverlayPlacement>,
     pub owner: Option<isize>,
 }
 
@@ -146,7 +149,7 @@ pub struct RepositionTarget {
     /// The EVE client window (or its monitor, when fullscreen): the box can
     /// never leave it.
     pub region: Rect,
-    pub pos: Option<(f64, f64)>,
+    pub pos: Option<OverlayPlacement>,
     pub width: f64,
     pub owner: Option<isize>,
 }
@@ -188,6 +191,27 @@ impl Session {
 
     fn set_origin(&mut self, x: i32, y: i32) {
         self.frac = (fraction(x - self.region.left, self.region.width() - self.w), fraction(y - self.region.top, self.region.height() - self.ref_h()));
+    }
+
+    /// A box whose middle is in the lower half of the region: its alerts grow
+    /// upward from its bottom edge.
+    fn anchors_bottom(&self, y: i32, h: i32) -> bool {
+        y + h / 2 > self.region.top + self.region.height() / 2
+    }
+
+    /// What to save: the width, the old-style fractions, and the anchored edge
+    /// where the box actually is (see `OverlayPlacement::edge`).
+    fn placement(&self) -> OverlayPlacement {
+        let (_, y) = self.origin();
+        let bottom = self.anchors_bottom(y, self.box_h);
+        let edge_y = if bottom { y + self.box_h } else { y };
+        let h = self.region.height().max(1);
+        OverlayPlacement {
+            fx: self.frac.0,
+            fy: self.frac.1,
+            width: f64::from(self.w) / self.scale - MARGIN * 2.0,
+            edge: Some(Edge { bottom, y: (f64::from(edge_y - self.region.top) / f64::from(h)).clamp(0.0, 1.0) }),
+        }
     }
 }
 
@@ -256,34 +280,53 @@ impl Overlays {
         self.slots.lock().unwrap().len()
     }
 
-    // Shows an alert for the pilot identified by `key`: centered near the
-    // top of the region, or at the pilot's saved spot in it (see `place`).
-    pub fn show(&self, app: &AppHandle, key: &str, p: Placement, mut alert: OverlayAlert) {
-        let (width, region) = (p.width, p.region);
-        let label = label_for(key);
-        let existed = self.slots.lock().unwrap().contains_key(&label);
-        if !existed {
-            // Built outside the lock: creating a window pumps the UI thread.
-            let started = Instant::now();
-            match create(app, &label, width) {
-                Ok(window) => {
-                    diag(format!("{label}: window built in {} ms", started.elapsed().as_millis()));
-                    let mut slots = self.slots.lock().unwrap();
-                    if slots.contains_key(&label) {
-                        let _ = window.destroy(); // another thread created it first
-                    } else {
-                        slots.insert(
-                            label.clone(),
-                            Slot { window, ready: false, queue: vec![], last_used: Instant::now(), waiting_since: Some(started), owner: None, layout: None, scale: 1.0, desktop: None, hidden_by_cloak: false },
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!("       [overlay] could not create window {label}: {e}");
-                    return;
-                }
-            }
+    /// Makes sure window `label` exists, building it if needed. Built outside
+    /// the lock: building a window waits on the UI thread. `Some(true)` if it
+    /// was built just now, `None` if it couldn't be.
+    fn ensure_slot(&self, app: &AppHandle, label: &str, width: f64, time_first_message: bool) -> Option<bool> {
+        if self.slots.lock().unwrap().contains_key(label) {
+            return Some(false);
         }
+        let started = Instant::now();
+        let window = match create(app, label, width) {
+            Ok(w) => w,
+            Err(e) => {
+                println!("       [overlay] could not create window {label}: {e}");
+                return None;
+            }
+        };
+        diag(format!("{label}: window built in {} ms", started.elapsed().as_millis()));
+        let mut slots = self.slots.lock().unwrap();
+        if slots.contains_key(label) {
+            let _ = window.destroy(); // another thread built it first (posted, doesn't wait)
+            return Some(false);
+        }
+        let waiting_since = time_first_message.then_some(started);
+        slots.insert(
+            label.to_string(),
+            Slot { window, ready: false, queue: vec![], last_used: Instant::now(), waiting_since, owner: None, layout: None, scale: 1.0, desktop: None, hidden_by_cloak: false },
+        );
+        Some(true)
+    }
+
+    // Shows an alert in the window identified by `key`: centered near the
+    // top of the region, or at the saved spot in it (see `place`).
+    pub fn show(&self, app: &AppHandle, key: &str, p: Placement, alert: OverlayAlert) {
+        self.present(app, key, p, alert, false);
+    }
+
+    /// A line past its pilot's rate cap, sent to the window its alert would
+    /// have gone to: the page bumps the count on that pilot and channel's
+    /// alert if one is showing, or shows `alert` (a Strip) instead, so a
+    /// capped line is never lost.
+    pub fn fold(&self, app: &AppHandle, key: &str, p: Placement, alert: OverlayAlert) {
+        self.present(app, key, p, alert, true);
+    }
+
+    fn present(&self, app: &AppHandle, key: &str, p: Placement, mut alert: OverlayAlert, fold: bool) {
+        let region = p.region;
+        let label = label_for(key);
+        let Some(built) = self.ensure_slot(app, &label, p.width, true) else { return };
         let mut slots = self.slots.lock().unwrap();
         let Some(slot) = slots.get_mut(&label) else {
             println!("       [overlay] {label}: slot vanished right after creation");
@@ -294,16 +337,15 @@ impl Overlays {
             println!("       [overlay] {label}: mid-reposition, delivering without moving the window");
         } else {
             adopt(slot, p.owner);
-            let (scale, up) = place(app, &slot.window, &p);
+            let (scale, up) = place(&slot.window, &p);
             alert.stack_up = up;
             slot.scale = scale;
             slot.layout = Some(p);
         }
-        let visible = slot.window.is_visible().unwrap_or(false);
         platform::show_without_activating(&slot.window);
         println!(
-            "       [overlay] {label} {} (was visible: {visible}, ready: {}), placed at region ({},{})-({},{})",
-            if existed { "reused" } else { "created" },
+            "       [overlay] {label} {} (ready: {}), placed at region ({},{})-({},{})",
+            if built { "created" } else { "reused" },
             slot.ready,
             region.left,
             region.top,
@@ -311,24 +353,11 @@ impl Overlays {
             region.bottom
         );
         slot.last_used = Instant::now();
-        let msg = Msg::Alert(alert);
-        if slot.ready {
-            send(app, &label, &msg);
-        } else {
+        let msg = if fold { Msg::Fold(alert) } else { Msg::Alert(alert) };
+        if !slot.ready {
             println!("       [overlay] {label}: not ready yet, queuing (queue len will be {})", slot.queue.len() + 1);
-            slot.queue.push(msg);
         }
-    }
-
-    /// A line past its pilot's rate cap: tell every open overlay to bump the badge.
-    pub fn fold(&self, app: &AppHandle, f: Fold) {
-        let mut slots = self.slots.lock().unwrap();
-        for (label, slot) in slots.iter_mut() {
-            if slot.ready {
-                send(app, label, &Msg::Fold(f.clone()));
-                slot.last_used = Instant::now();
-            }
-        }
+        deliver(app, &label, slot, msg);
     }
 
     /// The overlay page has loaded: flush what was queued while it started.
@@ -368,43 +397,44 @@ impl Overlays {
     pub fn enter_reposition(&self, app: &AppHandle, targets: Vec<RepositionTarget>) {
         for t in targets {
             let label = label_for(&t.key);
-            let existed = self.slots.lock().unwrap().contains_key(&label);
-            if !existed {
-                match create(app, &label, t.width) {
-                    Ok(window) => {
-                        let mut slots = self.slots.lock().unwrap();
-                        if !slots.contains_key(&label) {
-                            slots.insert(
-                                label.clone(),
-                                Slot { window, ready: false, queue: vec![], last_used: Instant::now(), waiting_since: None, owner: None, layout: None, scale: 1.0, desktop: None, hidden_by_cloak: false },
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!("       [overlay] reposition: could not create window {label}: {e}");
-                        continue;
-                    }
-                }
+            if self.ensure_slot(app, &label, t.width, false).is_none() {
+                continue;
             }
-            let scale = scale_for(app, &t.monitor);
-            let s = Session {
+            let scale = scale_for(&t.monitor);
+            let mut s = Session {
                 region: t.region,
                 scale,
-                frac: t.pos.unwrap_or((0.5, 0.0)),
+                frac: (0.5, 0.0),
                 w: (win_w_for(t.width) * scale).round() as i32,
                 box_h: (BOX_H * scale).round() as i32,
                 start: (0, 0, 0),
             };
-            let mut slots = self.slots.lock().unwrap();
-            let Some(slot) = slots.get_mut(&label) else { continue };
-            adopt(slot, t.owner);
-            let (x, y) = s.origin();
-            let _ = slot.window.set_size(PhysicalSize::new(s.w as u32, s.box_h as u32));
-            let _ = slot.window.set_position(PhysicalPosition::new(x, y));
-            let _ = slot.window.set_ignore_cursor_events(false);
-            platform::show_without_activating(&slot.window);
-            deliver(app, &label, slot, Msg::RepositionEnter(RepositionInfo { name: t.name, tag: t.tag, accent: t.accent }));
-            self.sessions.lock().unwrap().insert(label, s);
+            if let Some(pos) = t.pos {
+                s.frac = (pos.fx, pos.fy);
+                // A saved anchored edge puts the box's top (or bottom) exactly there.
+                if let Some(e) = pos.edge {
+                    let (x, _) = s.origin();
+                    let edge_y = edge_to_y(&s.region, e);
+                    s.set_origin(x, if e.bottom { edge_y - s.box_h } else { edge_y });
+                }
+            }
+            let window = {
+                let mut slots = self.slots.lock().unwrap();
+                let Some(slot) = slots.get_mut(&label) else { continue };
+                adopt(slot, t.owner);
+                let (x, y) = s.origin();
+                // Posted to the UI thread, not waited on.
+                let _ = slot.window.set_size(PhysicalSize::new(s.w as u32, s.box_h as u32));
+                let _ = slot.window.set_position(PhysicalPosition::new(x, y));
+                let hotkey = crate::hotkey::current_text().unwrap_or_else(|| eve_chatterer_core::settings::DEFAULT_REPOSITION_HOTKEY.to_string());
+                deliver(app, &label, slot, Msg::RepositionEnter(RepositionInfo { name: t.name, tag: t.tag, accent: t.accent, hotkey }));
+                self.sessions.lock().unwrap().insert(label, s);
+                slot.window.clone()
+            };
+            // Outside the locks: changing the window's style waits on the UI
+            // thread, which owns it (state.rs, "Locking rules").
+            platform::set_click_through(&window, false);
+            platform::show_without_activating(&window);
         }
     }
 
@@ -456,7 +486,14 @@ impl Overlays {
         if box_h == s.box_h || box_h <= 0 {
             return;
         }
+        // A box in the lower half keeps its bottom edge where it is (that's
+        // the edge its alerts will grow up from); one in the top half keeps its top.
+        let (x, y) = s.origin();
+        let old_h = s.box_h;
         s.box_h = box_h;
+        if s.anchors_bottom(y, old_h) {
+            s.set_origin(x, y + old_h - box_h);
+        }
         let (x, y) = s.origin();
         let _ = slot.window.set_size(PhysicalSize::new(s.w as u32, s.box_h as u32));
         platform::move_to(&slot.window, x, y);
@@ -465,11 +502,11 @@ impl Overlays {
     /// Keeps every overlay inside its EVE client as the client moves or is
     /// resized, called on every presence sample. Positioned boxes keep their
     /// relative spot; alerts are re-placed exactly as when they were shown.
-    pub fn follow(&self, app: &AppHandle, snap: &Snapshot) {
+    pub fn follow(&self, snap: &Snapshot) {
         for c in &snap.clients {
             // Minimized clients have no rect: their overlays hide with them.
             if let (Some(region), Some(monitor)) = (c.rect, c.monitor) {
-                self.follow_client(app, c.hwnd, region, monitor);
+                self.follow_client(c.hwnd, region, monitor);
             }
         }
         // Keep each overlay on its client's virtual desktop, in case the
@@ -492,7 +529,7 @@ impl Overlays {
     /// dragged, and on every presence sample. Positions are always computed
     /// from what was placed (never read back from the window, which may not
     /// have caught up with an earlier move yet), so nothing drifts.
-    pub fn follow_client(&self, app: &AppHandle, owner: isize, region: Rect, monitor: Rect) {
+    pub fn follow_client(&self, owner: isize, region: Rect, monitor: Rect) {
         let mut slots = self.slots.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
         for (label, slot) in slots.iter_mut() {
@@ -514,7 +551,7 @@ impl Overlays {
                     // A different monitor may have a different scale: size it again.
                     p.monitor = monitor;
                     let p = *p;
-                    slot.scale = place(app, &slot.window, &p).0;
+                    slot.scale = place(&slot.window, &p).0;
                 } else {
                     let (x, y, ..) = geometry(p, slot.scale);
                     platform::move_to(&slot.window, x, y);
@@ -548,16 +585,19 @@ impl Overlays {
         let mut out = Vec::with_capacity(sessions.len());
         for (label, s) in sessions {
             let key = key_from_label(&label);
-            let mut slots = self.slots.lock().unwrap();
-            let Some(slot) = slots.get_mut(&label) else {
-                out.push((key, None));
-                continue;
+            let window = {
+                let mut slots = self.slots.lock().unwrap();
+                let Some(slot) = slots.get_mut(&label) else {
+                    out.push((key, None));
+                    continue;
+                };
+                deliver(app, &label, slot, Msg::RepositionExit);
+                slot.last_used = Instant::now();
+                slot.window.clone()
             };
-            deliver(app, &label, slot, Msg::RepositionExit);
-            let _ = slot.window.set_ignore_cursor_events(true);
-            slot.last_used = Instant::now();
-            drop(slots);
-            out.push((key, Some(OverlayPlacement { fx: s.frac.0, fy: s.frac.1, width: f64::from(s.w) / s.scale - MARGIN * 2.0 })));
+            // Outside the lock: it waits on the UI thread.
+            platform::set_click_through(&window, true);
+            out.push((key, Some(s.placement())));
         }
         out
     }
@@ -613,8 +653,17 @@ fn meter_mode() -> String {
     std::env::var("EVE_CHATTERER_METER").ok().filter(|m| ["smooth", "stepped", "off"].contains(&m.as_str())).unwrap_or_else(|| "stepped".into())
 }
 
+/// Measurement only: `EVE_CHATTERER_FX=noshadow,noarrive,nopulse` (any
+/// subset) switches those effects off, to find what the CPU while animating
+/// goes to. Unknown words are dropped; unset means everything on.
+fn fx_off() -> String {
+    const KNOWN: [&str; 3] = ["noshadow", "noarrive", "nopulse"];
+    let raw = std::env::var("EVE_CHATTERER_FX").unwrap_or_default();
+    raw.split(',').map(str::trim).filter(|w| KNOWN.contains(w)).collect::<Vec<_>>().join("+")
+}
+
 fn create(app: &AppHandle, label: &str, width: f64) -> tauri::Result<WebviewWindow> {
-    let url = WebviewUrl::App(format!("overlay.html?meter={}", meter_mode()).into());
+    let url = WebviewUrl::App(format!("overlay.html?meter={}&fx={}", meter_mode(), fx_off()).into());
     let window = WebviewWindowBuilder::new(app, label, url)
         .title("EVE Chatterer overlay")
         .inner_size(win_w_for(width), WIN_H)
@@ -625,20 +674,23 @@ fn create(app: &AppHandle, label: &str, width: f64) -> tauri::Result<WebviewWind
         .focused(false)
         .visible(false)
         .resizable(false)
-        .shadow(false)
-        .build()?;
+        .shadow(false);
+    let window = crate::storage::with_webview_dir(window).build()?;
     window.set_ignore_cursor_events(true)?; // click-through
     platform::never_activate(&window);
     Ok(window)
 }
 
-/// The scale factor of the monitor whose top-left corner is at `monitor`.
-fn scale_for(app: &AppHandle, monitor: &Rect) -> f64 {
-    app.available_monitors()
-        .ok()
-        .and_then(|ms| ms.into_iter().find(|m| m.position().x == monitor.left && m.position().y == monitor.top))
-        .map(|m| m.scale_factor())
-        .unwrap_or(1.0)
+/// The scale factor of `monitor`. From Windows directly: Tauri's monitor
+/// list waits on the UI thread, and this is asked while holding the lock.
+#[cfg(windows)]
+fn scale_for(monitor: &Rect) -> f64 {
+    eve_chatterer_core::winapi::scale_at(monitor.left + monitor.width() / 2, monitor.top + monitor.height() / 2)
+}
+
+#[cfg(not(windows))]
+fn scale_for(_: &Rect) -> f64 {
+    1.0
 }
 
 /// Top-left of the positioned box (physical) for a saved fractional spot in
@@ -649,10 +701,16 @@ fn box_origin(region: &Rect, (fx, fy): (f64, f64), w: i32, h: i32) -> (i32, i32)
     clamp_into(region, x, y, w, h)
 }
 
+/// The physical y of a saved anchored edge in `region`.
+fn edge_to_y(region: &Rect, e: Edge) -> i32 {
+    (region.top + (e.y * f64::from(region.height())).round() as i32).clamp(region.top, region.bottom)
+}
+
 /// Sizes and positions a window for real alerts, returning the scale it used
-/// and whether its alerts should stack upward (see `geometry`).
-fn place(app: &AppHandle, window: &WebviewWindow, p: &Placement) -> (f64, bool) {
-    let scale = scale_for(app, &p.monitor);
+/// and whether its alerts should stack upward (see `geometry`). Tauri posts
+/// the size and position to the UI thread without waiting.
+fn place(window: &WebviewWindow, p: &Placement) -> (f64, bool) {
+    let scale = scale_for(&p.monitor);
     let (x, y, w, h, up) = geometry(p, scale);
     let _ = window.set_size(PhysicalSize::new(w as u32, h as u32));
     let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -670,11 +728,14 @@ fn geometry(p: &Placement, scale: f64) -> (i32, i32, i32, i32, bool) {
         Some(pos) => {
             let box_h = (BOX_H * scale).round() as i32;
             let top = (STACK_EDGE * scale).round() as i32;
-            let (bx, by) = box_origin(region, pos, w, box_h);
-            if pos.1 > 0.5 {
-                (bx, by + box_h + top - h, true)
-            } else {
-                (bx, by - top, false)
+            let (bx, by) = box_origin(region, (pos.fx, pos.fy), w, box_h);
+            match pos.edge {
+                // The stack's first alert starts exactly on the saved edge.
+                Some(e) if e.bottom => (bx, edge_to_y(region, e) + top - h, true),
+                Some(e) => (bx, edge_to_y(region, e) - top, false),
+                // Saved before edges existed: the box's top plus `BOX_H`.
+                None if pos.fy > 0.5 => (bx, by + box_h + top - h, true),
+                None => (bx, by - top, false),
             }
         }
         None => {
@@ -694,9 +755,9 @@ mod platform {
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
     use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, ShowWindowAsync, SW_HIDE, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_NOTOPMOST,
+        GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindowAsync, SW_HIDE, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_NOTOPMOST,
         HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
     };
 
     fn hwnd(window: &WebviewWindow) -> Option<HWND> {
@@ -751,10 +812,34 @@ mod platform {
         }
     }
 
+    /// Turns click-through on or off by flipping only `WS_EX_TRANSPARENT`.
+    /// Not through Tauri's `set_ignore_cursor_events`: that rewrites the
+    /// whole extended style from its own records, dropping our
+    /// `WS_EX_NOACTIVATE`, and then `ShowWindow(SW_SHOW)`s the window. With
+    /// that gone, grabbing the reposition box activated it, EVE stopped being
+    /// the fullscreen foreground window, and Windows showed the taskbar.
+    ///
+    /// `WS_EX_LAYERED` goes with it, as Tauri does: Windows hit-tests a
+    /// layered window against the size it had when it became layered, so
+    /// leaving it on made a box widened in reposition mode take the mouse
+    /// only across its old width (the rest fell through to the game).
+    pub fn set_click_through(window: &WebviewWindow, on: bool) {
+        let Some(h) = hwnd(window) else { return };
+        unsafe {
+            let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
+            let through = (WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0) as isize;
+            let ex = if on { ex | through } else { ex & !through };
+            SetWindowLongPtrW(h, GWL_EXSTYLE, ex);
+            let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS);
+        }
+    }
+
+    /// Shows without activating, and without waiting for the UI thread
+    /// that owns the window (`ShowWindow` would).
     pub fn show_without_activating(window: &WebviewWindow) {
         if let Some(h) = hwnd(window) {
             unsafe {
-                let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
+                let _ = ShowWindowAsync(h, SW_SHOWNOACTIVATE);
             }
         }
     }
@@ -782,7 +867,7 @@ mod platform {
         unsafe {
             SetWindowLongPtrW(h, GWLP_HWNDPARENT, owner.unwrap_or(0));
             let after = if owner.is_some() { HWND_NOTOPMOST } else { HWND_TOPMOST };
-            let _ = SetWindowPos(h, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            let _ = SetWindowPos(h, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
         }
     }
 }
@@ -792,6 +877,10 @@ mod platform {
     use tauri::WebviewWindow;
 
     pub fn never_activate(_: &WebviewWindow) {}
+
+    pub fn set_click_through(window: &WebviewWindow, on: bool) {
+        let _ = window.set_ignore_cursor_events(on);
+    }
 
     pub fn set_owner(_: &WebviewWindow, _: Option<isize>) {}
 
@@ -822,7 +911,7 @@ mod tests {
 
     #[test]
     fn labels_are_valid_and_distinct_for_names_with_odd_characters() {
-        let keys = [overlay_key(Some("12345"), "Jarna"), overlay_key(None, "Test Person / Jr."), overlay_key(None, "Psianna Archeia")];
+        let keys = [overlay_key(Some("12345"), "Holden"), overlay_key(None, "Test Person / Jr."), overlay_key(None, "Naomi Nagata")];
         let labels: Vec<String> = keys.iter().map(|k| label_for(k)).collect();
         for l in &labels {
             assert!(l.chars().all(|c| c.is_ascii_alphanumeric() || "-_/:".contains(c)), "{l}");
@@ -833,13 +922,52 @@ mod tests {
 
     #[test]
     fn overlay_key_prefers_the_id_and_falls_back_to_a_lowercased_name() {
-        assert_eq!(overlay_key(Some("42"), "Jarna"), "id:42");
-        assert_eq!(overlay_key(None, "Jarna"), "name:jarna");
-        assert_eq!(overlay_key(Some(""), "Jarna"), "name:jarna");
+        assert_eq!(overlay_key(Some("42"), "Holden"), "id:42");
+        assert_eq!(overlay_key(None, "Holden"), "name:holden");
+        assert_eq!(overlay_key(Some(""), "Holden"), "name:holden");
     }
 
     #[test]
     fn key_from_label_round_trips_through_label_for_for_simple_keys() {
         assert_eq!(key_from_label(&label_for("id:42")), "id:42");
+    }
+
+    const REGION: Rect = Rect { left: 100, top: 50, right: 1700, bottom: 950 };
+
+    /// A reposition session with a box of this height placed at (x, y).
+    fn session_at(y: i32, box_h: i32) -> Session {
+        let mut s = Session { region: REGION, scale: 1.0, frac: (0.5, 0.0), w: 520, box_h, start: (0, 0, 0) };
+        s.set_origin(400, y);
+        s
+    }
+
+    /// Where the saved placement puts the edge the alert stack starts from.
+    fn alert_edge(p: OverlayPlacement) -> (i32, bool) {
+        let placement = Placement { monitor: REGION, region: REGION, width: 460.0, custom_pos: Some(p), owner: None };
+        let (_, y, _, h, up) = geometry(&placement, 1.0);
+        let pad = STACK_EDGE as i32;
+        (if up { y + h - pad } else { y + pad }, up)
+    }
+
+    #[test]
+    fn alerts_start_exactly_on_the_boxs_edge_whatever_its_height() {
+        for box_h in [120, 170, 240] {
+            // Top half: alerts grow down from the box's top edge.
+            let s = session_at(200, box_h);
+            assert_eq!(alert_edge(s.placement()), (200, false), "top, box {box_h}");
+            // Lower half: they grow up from its bottom edge. This is what the
+            // fixed BOX_H used to get wrong by (box_h - BOX_H).
+            let s = session_at(700, box_h);
+            assert_eq!(alert_edge(s.placement()), (700 + box_h, true), "bottom, box {box_h}");
+        }
+    }
+
+    #[test]
+    fn a_placement_saved_before_edges_still_places_the_old_way() {
+        let old = OverlayPlacement { fx: 0.5, fy: 0.9, width: 460.0, edge: None };
+        let (edge, up) = alert_edge(old);
+        assert!(up);
+        let box_top = REGION.top + (0.9 * f64::from(REGION.height() - BOX_H as i32)).round() as i32;
+        assert_eq!(edge, box_top + BOX_H as i32);
     }
 }

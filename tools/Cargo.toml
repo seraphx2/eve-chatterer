@@ -9,6 +9,8 @@ name = "eve_chatterer_tools"
 
 [dependencies]
 notify = "8"
+# voicefx: trying a "ship computer" filter on spoken alerts.
+rodio = "0.20"
 eve-chatterer-core = { path = "../core" }
 
 [target.'cfg(windows)'.dependencies.windows]

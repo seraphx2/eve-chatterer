@@ -14,6 +14,11 @@ pub struct Header {
     pub channel_name: String,
     pub listener: String,
     pub session_started: Option<Stamp>,
+    /// Which corporation, alliance or solar system this channel currently is,
+    /// from EVE's "Channel changed to Corp : Sukebe Corporation" system line
+    /// (written right after the header, and again if it changes mid-session).
+    /// The header's channel id alone is just `corp` / `alliance` for everyone.
+    pub instance: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,10 +37,15 @@ fn clean(s: &str) -> &str {
 /// session start), so a localized client still works.
 pub fn parse_header(text: &str) -> Option<Header> {
     let mut fields: Vec<(String, String)> = vec![];
-    for raw in text.lines() {
+    let mut instance = None;
+    let mut lines = text.lines();
+    for raw in lines.by_ref() {
         let line = clean(raw);
         if line.starts_with('[') {
-            break; // first chat line: the header is over
+            // First chat line: the header is over. EVE writes the channel's
+            // instance line first, so look at the opening few.
+            instance = std::iter::once(raw).chain(lines.by_ref().take(4)).filter_map(parse_line).find_map(|l| channel_instance(&l));
+            break;
         }
         if let Some((k, v)) = line.split_once(':') {
             fields.push((k.trim().to_string(), v.trim().to_string()));
@@ -57,7 +67,20 @@ pub fn parse_header(text: &str) -> Option<Header> {
         channel_name: field("Channel Name", 1).unwrap_or_default(),
         listener,
         session_started: field("Session started", 3).and_then(|v| Stamp::parse_log(&v)),
+        instance,
     })
+}
+
+/// The name in EVE's `EVE System > Channel changed to Corp : Sukebe Corporation`
+/// line (the same shape for Alliance, and for Local with the solar system).
+/// English wording only; a localized client just doesn't report an instance.
+pub fn channel_instance(l: &ChatLine) -> Option<String> {
+    if l.sender != "EVE System" {
+        return None;
+    }
+    let (_, name) = l.text.strip_prefix("Channel changed to ")?.split_once(" : ")?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Parses `[ 2026.09.27 01:37:31 ] Sender > text`. Returns `None` for header
@@ -169,20 +192,32 @@ mod tests {
 
     #[test]
     fn parses_a_real_shaped_header() {
-        let text = format!("\u{feff}{}", header("local", "Local", "Jarna"));
+        let text = format!("\u{feff}{}", header("local", "Local", "Holden"));
         let h = parse_header(&text).unwrap();
         assert_eq!(h.channel_id, "local");
         assert_eq!(h.channel_name, "Local");
-        assert_eq!(h.listener, "Jarna");
+        assert_eq!(h.listener, "Holden");
         assert_eq!(h.session_started, Stamp::parse_log("2026.09.26 21:03:56"));
     }
 
     #[test]
     fn header_falls_back_to_position_when_keys_are_localized() {
-        let text = "\r\n---\r\n  Kanal-ID:   local\r\n  Kanalname:  Lokal\r\n  Zuhörer:    Jarna\r\n  Sitzung gestartet: 2026.09.26 21:03:56\r\n---\r\n";
+        let text = "\r\n---\r\n  Kanal-ID:   local\r\n  Kanalname:  Lokal\r\n  Zuhörer:    Holden\r\n  Sitzung gestartet: 2026.09.26 21:03:56\r\n---\r\n";
         let h = parse_header(text).unwrap();
-        assert_eq!((h.channel_name.as_str(), h.listener.as_str()), ("Lokal", "Jarna"));
+        assert_eq!((h.channel_name.as_str(), h.listener.as_str()), ("Lokal", "Holden"));
         assert!(h.session_started.is_some());
+    }
+
+    #[test]
+    fn the_instance_line_after_the_header_names_the_corp() {
+        let text = header("corp", "Corp", "Holden")
+            + &line("2026.09.30 00:47:40", "EVE System", "Channel changed to Corp : Sukebe Corporation")
+            + &line("2026.09.30 00:47:40", "EVE System", "Channel MOTD: Test");
+        assert_eq!(parse_header(&text).unwrap().instance.as_deref(), Some("Sukebe Corporation"));
+        // Not written yet, or somebody else saying it: no instance.
+        assert_eq!(parse_header(&header("corp", "Corp", "Holden")).unwrap().instance, None);
+        let fake = header("corp", "Corp", "Holden") + &line("2026.09.30 00:47:41", "Amos Burton", "Channel changed to Corp : Nope");
+        assert_eq!(parse_header(&fake).unwrap().instance, None);
     }
 
     #[test]
@@ -193,8 +228,8 @@ mod tests {
 
     #[test]
     fn parses_chat_lines_with_bom_and_odd_text() {
-        let l = parse_line(line("2026.09.27 01:37:31", "Rilakss", "Предложение гиперсети: Zirnitra*").trim_end()).unwrap();
-        assert_eq!(l.sender, "Rilakss");
+        let l = parse_line(line("2026.09.27 01:37:31", "Amos Burton", "Предложение гиперсети: Zirnitra*").trim_end()).unwrap();
+        assert_eq!(l.sender, "Amos Burton");
         assert_eq!(l.text, "Предложение гиперсети: Zirnitra*");
         // A '>' or ']' inside the message must not confuse the split.
         let l = parse_line("[ 2026.09.27 01:37:31 ] Bob > a > b ] c").unwrap();
@@ -205,7 +240,7 @@ mod tests {
 
     #[test]
     fn reads_only_complete_lines_and_resumes() {
-        let mut bytes = file_bytes(&(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "one")));
+        let mut bytes = file_bytes(&(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "one")));
         let mut c = Cursor::new(bytes.clone());
         let first = read_complete_lines(&mut c, 0).unwrap();
         assert_eq!(first.lines.iter().filter(|l| parse_line(l).is_some()).count(), 1);
@@ -232,7 +267,7 @@ mod tests {
 
     #[test]
     fn truncation_restarts_from_the_top() {
-        let bytes = file_bytes(&(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "one")));
+        let bytes = file_bytes(&(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "one")));
         let mut c = Cursor::new(bytes);
         let r = read_complete_lines(&mut c, 99_999).unwrap();
         assert!(r.truncated);
@@ -241,7 +276,7 @@ mod tests {
 
     #[test]
     fn last_line_boundary_skips_history() {
-        let bytes = file_bytes(&(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "one") + &line("2026.09.27 01:00:01", "B", "two")));
+        let bytes = file_bytes(&(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "one") + &line("2026.09.27 01:00:01", "B", "two")));
         let len = bytes.len() as u64;
         let mut c = Cursor::new(bytes);
         assert_eq!(last_line_boundary(&mut c).unwrap(), len);
@@ -250,7 +285,7 @@ mod tests {
 
     #[test]
     fn reads_the_header_from_a_file() {
-        let mut c = Cursor::new(file_bytes(&header("local", "Local", "Jarna")));
-        assert_eq!(read_header(&mut c).unwrap().unwrap().listener, "Jarna");
+        let mut c = Cursor::new(file_bytes(&header("local", "Local", "Holden")));
+        assert_eq!(read_header(&mut c).unwrap().unwrap().listener, "Holden");
     }
 }

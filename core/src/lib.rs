@@ -15,6 +15,7 @@ pub mod presence;
 pub mod router;
 pub mod rules;
 pub mod settings;
+pub mod store;
 pub mod tailer;
 pub mod time;
 #[cfg(windows)]

@@ -1,12 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import Beacon from "./Beacon.svelte";
   import Panel from "./Panel.svelte";
   import Strip from "./Strip.svelte";
-  import type { Alert, Fold, RepositionInfo, Style, Tone } from "./types";
+  import type { Alert, RepositionInfo, Style, Tone } from "./types";
 
   /** How many alerts may be on screen at once in this window. */
   const MAX_VISIBLE = 5;
@@ -43,10 +42,13 @@
     }
   }
 
-  /** A line past the pilot's rate cap: bump the count of the latest matching alert. */
-  function fold(f: Fold) {
-    const target = [...alerts].filter((a) => a.pilot === f.pilot && a.channel === f.channel).sort((x, y) => y.id - x.id)[0];
+  /** A line past the pilot's rate cap: bump the count of the newest alert for
+   * that pilot and channel if one is showing, otherwise show it (the host
+   * sends it as a Strip), so a capped line is never lost. */
+  function fold(a: Alert) {
+    const target = [...alerts].filter((x) => x.pilot === a.pilot && x.channelId === a.channelId).sort((x, y) => y.id - x.id)[0];
     if (target) target.count += 1;
+    else add(a);
   }
 
   /** A stand-in alert, so the placeholder previews exactly what a real one will look like at this width. */
@@ -58,6 +60,7 @@
       tag: r.tag,
       accent: r.accent,
       channel: "Local",
+      channelId: "local",
       sender: "Example Pilot",
       text: "This is where alerts for this character will appear.",
       reason: "Preview",
@@ -126,11 +129,15 @@
   onMount(() => {
     const unlisten: Array<() => void> = [];
     let disposed = false;
+    // The window's own listen, not the global `listen`: that hears events
+    // emitted to *any* window, so with two clients every overlay showed
+    // the other's alerts and reposition box too.
+    const win = getCurrentWebviewWindow();
     (async () => {
-      const un1 = await listen<Alert>("overlay:alert", (e) => add(e.payload));
-      const un2 = await listen<Fold>("overlay:fold", (e) => fold(e.payload));
-      const un3 = await listen<RepositionInfo>("overlay:reposition-enter", (e) => (reposition = e.payload));
-      const un4 = await listen("overlay:reposition-exit", () => (reposition = null));
+      const un1 = await win.listen<Alert>("overlay:alert", (e) => add(e.payload));
+      const un2 = await win.listen<Alert>("overlay:fold", (e) => fold(e.payload));
+      const un3 = await win.listen<RepositionInfo>("overlay:reposition-enter", (e) => (reposition = e.payload));
+      const un4 = await win.listen("overlay:reposition-exit", () => (reposition = null));
       if (disposed) {
         un1();
         un2();
@@ -164,7 +171,7 @@
   >
     <p class="reposition-hint">
       <span class="reposition-tag">{reposition.tag}</span>
-      {reposition.name} · drag to move, drag the right edge to resize · Ctrl+Alt+O when done
+      {reposition.name} · drag to move, drag the right edge to resize · {reposition.hotkey} when done
     </p>
     <div class="reposition-preview">
       <Panel alert={sample(reposition)} />

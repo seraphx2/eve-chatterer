@@ -420,6 +420,11 @@ label.check input {
   color: var(--ink-faint);
   box-shadow: inset 0 0 0 1px var(--edge);
 }
+.pilot-org {
+  color: var(--ink);
+  font-size: 14px;
+  margin: 2px 0 0;
+}
 .pilot-id {
   color: var(--ink-dim);
   font-size: 13px;
@@ -448,6 +453,14 @@ label.check input {
 }
 .chip.regex-chip {
   font-family: "Consolas", "SFMono-Regular", ui-monospace, monospace;
+}
+/* A pattern that doesn't compile: matching skips it until it's fixed. */
+.chip.bad-chip {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.chip.bad-chip .chip-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
 }
 /* Shared between a regex chip's own delimiters and the Add dialog's input
    decoration, so a pattern reads the same way in both places. */
@@ -824,4 +837,77 @@ button.btn.play {
 }
 .savebar .msg.error {
   color: var(--danger);
+}
+
+
+.locations {
+  padding: 12px 18px 14px;
+}
+.location-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 0;
+}
+.location-row button.btn {
+  flex: 0 0 170px;
+}
+.storage-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+.storage-path.missing {
+  white-space: normal;
+  color: var(--ink-faint);
+}
+
+/* Hotkey recorder (General page) */
+.hotkey-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 360px;
+  padding: 7px 10px;
+  background: var(--panel-hi);
+  border: none;
+  box-shadow: inset 0 0 0 1px var(--edge);
+  color: var(--ink);
+  font: 500 13.5px var(--font);
+  cursor: pointer;
+  text-align: left;
+}
+.hotkey-box:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.hotkey-box.capturing {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--ink-dim);
+}
+.hotkey-box:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.hotkey-hint {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+.hotkey-warn {
+  margin-top: 8px;
+  max-width: 480px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent);
+}
+.hotkey-warn-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }

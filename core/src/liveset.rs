@@ -157,15 +157,23 @@ impl LiveSet {
         })
     }
 
-    /// Distinct characters currently followed in a channel. More than one
-    /// means the same line may arrive from several logs.
-    pub fn listeners_in_channel(&self, channel_id: &str) -> usize {
-        if channel_id.is_empty() {
+    /// Distinct characters currently followed in the same channel as `h`. More
+    /// than one means the same line may arrive from several logs. Corp and
+    /// Alliance share one channel id (`corp` / `alliance`) across every
+    /// corporation, so when both logs name their instance, the names must
+    /// match too; an unknown instance counts as the same (the safe side: a
+    /// needless merge wait, never a duplicate alert).
+    pub fn listeners_in_channel(&self, h: &Header) -> usize {
+        if h.channel_id.is_empty() {
             return 1;
         }
+        let same_instance = |o: &Header| match (&h.instance, &o.instance) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            _ => true,
+        };
         self.sessions
             .values()
-            .filter(|s| s.tailer.header().is_some_and(|h| h.channel_id == channel_id))
+            .filter(|s| s.tailer.header().is_some_and(|o| o.channel_id == h.channel_id && same_instance(o)))
             .map(|s| s.name.char_id.as_deref().unwrap_or(""))
             .collect::<HashSet<_>>()
             .len()
@@ -297,14 +305,14 @@ mod tests {
 
     #[test]
     fn parses_session_names() {
-        let n = parse_session_name("Local_20260926_210356_1216741999.txt").unwrap();
-        assert_eq!((n.channel.as_str(), n.char_id.as_deref(), n.stamp.as_str()), ("Local", Some("1216741999"), "20260926_210356"));
-        let n = parse_session_name("Private Chat (2)_20260926_210933_1216741999.txt").unwrap();
+        let n = parse_session_name("Local_20260926_210356_2112000001.txt").unwrap();
+        assert_eq!((n.channel.as_str(), n.char_id.as_deref(), n.stamp.as_str()), ("Local", Some("2112000001"), "20260926_210356"));
+        let n = parse_session_name("Private Chat (2)_20260926_210933_2112000001.txt").unwrap();
         assert_eq!(n.channel, "Private Chat (2)");
         // Real names from a public channel, a fleet and an alliance member's log.
         for (file, chan) in [
-            ("EVE University_20260927_041925_1590304510.txt", "EVE University"),
-            ("Fleet_20260927_041837_1590304510.txt", "Fleet"),
+            ("EVE University_20260927_041925_2112000002.txt", "EVE University"),
+            ("Fleet_20260927_041837_2112000002.txt", "Fleet"),
             ("Alliance_20260925_121918_496528567.txt", "Alliance"),
         ] {
             assert_eq!(parse_session_name(file).unwrap().channel, chan, "{file}");
@@ -321,15 +329,15 @@ mod tests {
     #[test]
     fn live_set_is_the_newest_file_per_character_and_channel() {
         let dir = tempfile::tempdir().unwrap();
-        write_session(dir.path(), "Local", "20260901_100000", "1", "Jarna", &[]);
-        let newest = write_session(dir.path(), "Local", "20260926_100000", "1", "Jarna", &[]);
-        write_session(dir.path(), "Local", "20260926_100000", "2", "Psianna", &[]);
-        write_session(dir.path(), "Corp", "20260926_100000", "1", "Jarna", &[]);
+        write_session(dir.path(), "Local", "20260901_100000", "1", "Holden", &[]);
+        let newest = write_session(dir.path(), "Local", "20260926_100000", "1", "Holden", &[]);
+        write_session(dir.path(), "Local", "20260926_100000", "2", "Naomi", &[]);
+        write_session(dir.path(), "Corp", "20260926_100000", "1", "Holden", &[]);
         fs::write(dir.path().join("readme.txt"), "x").unwrap();
 
         let mut live = LiveSet::new(dir.path(), existing());
         let d = live.rescan().unwrap();
-        assert_eq!(live.len(), 3, "old Local for Jarna and the stray txt are ignored: {d:?}");
+        assert_eq!(live.len(), 3, "old Local for Holden and the stray txt are ignored: {d:?}");
         assert!(live.sessions().any(|s| s.path == newest));
         assert!(live.rescan().unwrap().is_empty(), "a second scan finds nothing new");
     }
@@ -337,7 +345,7 @@ mod tests {
     #[test]
     fn follows_appends_without_replaying_history() {
         let dir = tempfile::tempdir().unwrap();
-        let p = write_session(dir.path(), "Local", "20260926_100000", "1", "Jarna", &[("2026.09.26 10:00:01", "A", "old")]);
+        let p = write_session(dir.path(), "Local", "20260926_100000", "1", "Holden", &[("2026.09.26 10:00:01", "A", "old")]);
         let mut live = LiveSet::new(dir.path(), existing());
         live.rescan().unwrap();
         assert!(live.poll().events.is_empty());
@@ -345,20 +353,20 @@ mod tests {
         let ev = live.poll().events;
         assert_eq!(ev.len(), 1);
         assert_eq!(ev[0].line.text, "hello");
-        assert_eq!(ev[0].header.as_ref().unwrap().listener, "Jarna");
+        assert_eq!(ev[0].header.as_ref().unwrap().listener, "Holden");
         assert_eq!(ev[0].char_id.as_deref(), Some("1"));
     }
 
     #[test]
     fn a_new_session_supersedes_the_old_one_and_replays_from_its_header() {
         let dir = tempfile::tempdir().unwrap();
-        let old = write_session(dir.path(), "Local", "20260926_100000", "1", "Jarna", &[]);
+        let old = write_session(dir.path(), "Local", "20260926_100000", "1", "Holden", &[]);
         let mut live = LiveSet::new(dir.path(), LiveConfig::default());
         live.rescan().unwrap();
         assert_eq!(live.len(), 1);
 
-        // Jarna logs in again: a brand-new file appears with lines already in it.
-        let new = write_session(dir.path(), "Local", "20260926_120000", "1", "Jarna", &[("2026.09.26 12:00:02", "Bob", "first")]);
+        // Holden logs in again: a brand-new file appears with lines already in it.
+        let new = write_session(dir.path(), "Local", "20260926_120000", "1", "Holden", &[("2026.09.26 12:00:02", "Bob", "first")]);
         let d = live.rescan().unwrap();
         assert!(d.contains(&Discovery::Superseded { old: old.clone(), new: new.clone() }), "{d:?}");
         assert!(d.iter().any(|x| matches!(x, Discovery::Adopted { from_start: true, .. })));
@@ -370,20 +378,37 @@ mod tests {
     #[test]
     fn counts_distinct_listeners_in_a_channel() {
         let dir = tempfile::tempdir().unwrap();
-        write_session(dir.path(), "Local", "20260926_100000", "1", "Jarna", &[]);
-        write_session(dir.path(), "Local", "20260926_100000", "2", "Psianna", &[]);
-        write_session(dir.path(), "Corp", "20260926_100000", "1", "Jarna", &[]);
+        write_session(dir.path(), "Local", "20260926_100000", "1", "Holden", &[]);
+        write_session(dir.path(), "Local", "20260926_100000", "2", "Naomi", &[]);
+        write_session(dir.path(), "Corp", "20260926_100000", "1", "Holden", &[]);
         let mut live = LiveSet::new(dir.path(), existing());
         live.rescan().unwrap();
-        assert_eq!(live.listeners_in_channel("local"), 2);
-        assert_eq!(live.listeners_in_channel("chan"), 1);
-        assert_eq!(live.listeners_in_channel(""), 1);
+        let h = |id: &str| Header { channel_id: id.into(), ..Header::default() };
+        assert_eq!(live.listeners_in_channel(&h("local")), 2);
+        assert_eq!(live.listeners_in_channel(&h("chan")), 1);
+        assert_eq!(live.listeners_in_channel(&h("")), 1);
+    }
+
+    #[test]
+    fn characters_in_different_corps_do_not_share_corp_chat() {
+        let dir = tempfile::tempdir().unwrap();
+        let named = |corp: &str| [("2026.09.26 10:00:00", "EVE System", format!("Channel changed to Corp : {corp}"))];
+        for (id, who, corp) in [("1", "Holden", "Rocinante"), ("2", "Naomi", "Rocinante"), ("3", "Amos Burton", "Tycho Station")] {
+            let l = named(corp);
+            write_session(dir.path(), "Corp", "20260926_100000", id, who, &[(l[0].0, l[0].1, l[0].2.as_str())]);
+        }
+        let mut live = LiveSet::new(dir.path(), existing());
+        live.rescan().unwrap();
+        let corp = |name: Option<&str>| Header { channel_id: "chan".into(), instance: name.map(String::from), ..Header::default() };
+        assert_eq!(live.listeners_in_channel(&corp(Some("Rocinante"))), 2);
+        assert_eq!(live.listeners_in_channel(&corp(Some("tycho station"))), 1, "names compare without case");
+        assert_eq!(live.listeners_in_channel(&corp(None)), 3, "an unknown corp waits, as before");
     }
 
     #[test]
     fn a_deleted_file_is_dropped() {
         let dir = tempfile::tempdir().unwrap();
-        let p = write_session(dir.path(), "Local", "20260926_100000", "1", "Jarna", &[]);
+        let p = write_session(dir.path(), "Local", "20260926_100000", "1", "Holden", &[]);
         let mut live = LiveSet::new(dir.path(), existing());
         live.rescan().unwrap();
         fs::remove_file(&p).unwrap();
@@ -395,8 +420,8 @@ mod tests {
     #[test]
     fn events_from_several_files_are_ordered_by_time() {
         let dir = tempfile::tempdir().unwrap();
-        let a = write_session(dir.path(), "Local", "20260926_100000", "1", "Jarna", &[]);
-        let b = write_session(dir.path(), "Corp", "20260926_100000", "1", "Jarna", &[]);
+        let a = write_session(dir.path(), "Local", "20260926_100000", "1", "Holden", &[]);
+        let b = write_session(dir.path(), "Corp", "20260926_100000", "1", "Holden", &[]);
         let mut live = LiveSet::new(dir.path(), existing());
         live.rescan().unwrap();
         append(&b, &line("2026.09.26 10:00:05", "X", "later"));

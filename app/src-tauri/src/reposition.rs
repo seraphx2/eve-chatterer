@@ -39,11 +39,7 @@ pub fn toggle(app: &AppHandle) {
 fn enter(app: &AppHandle) {
     let state = app.state::<AppState>();
     let targets: Vec<RepositionTarget> = {
-        let guard = state.engine.lock().unwrap();
-        let Some(engine) = guard.as_ref() else {
-            *state.repositioning.lock().unwrap() = false;
-            return;
-        };
+        let engine = state.engine.lock().unwrap();
         // Only the character the player is actually looking at: the focused
         // client, or (focus elsewhere, e.g. on the settings window) every
         // client on screen. Offline alts and hidden clients would all pile up
@@ -71,7 +67,7 @@ fn enter(app: &AppHandle) {
                     accent: crate::runner::accent_for(&p.name),
                     monitor,
                     region,
-                    pos: p.placement.map(|pl| (pl.fx, pl.fy)),
+                    pos: p.placement,
                     width: p.placement.map(|pl| pl.width).unwrap_or(DEFAULT_OVERLAY_WIDTH),
                     owner: Some(hwnd),
                 })
@@ -91,8 +87,7 @@ fn exit(app: &AppHandle) {
     let state = app.state::<AppState>();
     let results = state.overlays.exit_reposition(app);
     println!("[reposition] exiting, {} window(s) to save", results.len());
-    let mut guard = state.engine.lock().unwrap();
-    let Some(engine) = guard.as_mut() else { return };
+    let mut engine = state.engine.lock().unwrap();
     for (key, placement) in results {
         // `None` here means the read-back failed (e.g. the window vanished
         // mid-session) rather than "the user wants this cleared" - leave
@@ -103,9 +98,7 @@ fn exit(app: &AppHandle) {
         let Some(id) = key.strip_prefix("id:") else { continue };
         engine.pilots_mut().set_placement(id, Some(placement));
     }
-    if let Ok(cfg_dir) = app.path().app_config_dir() {
-        if let Err(e) = engine.pilots().save(&cfg_dir.join("pilots.json")) {
-            eprintln!("could not save pilots.json after reposition: {e}");
-        }
+    if let Err(e) = crate::state::save_pilots(&engine) {
+        eprintln!("{e}");
     }
 }

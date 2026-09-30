@@ -135,8 +135,10 @@ fn print_alert(a: &Alert, decisions: &[Decision]) {
         let what = match &d.outcome {
             Outcome::Suppressed(SuppressedBy::FocusedPilot) => "suppressed (you are on this client)".to_string(),
             Outcome::Suppressed(SuppressedBy::VisibleOnScreen) => "suppressed (this client is on screen)".to_string(),
-            Outcome::Limited(OverCap::Drop) => "over its rate cap: dropped".to_string(),
-            Outcome::Limited(OverCap::Fold) => "over its rate cap: folded into the count badge".to_string(),
+            Outcome::Limited { over: OverCap::Drop, .. } => "over its rate cap: dropped".to_string(),
+            Outcome::Limited { over: OverCap::Fold, deliveries } => {
+                format!("over its rate cap: folded into the count badge ({})", deliveries.iter().map(delivery).collect::<Vec<_>>().join(" + "))
+            }
             Outcome::Deliver(v) if v.is_empty() => "nothing to show".to_string(),
             Outcome::Deliver(v) => v.iter().map(delivery).collect::<Vec<_>>().join(" + "),
         };
@@ -278,6 +280,13 @@ fn main() {
                 Event::PilotInLogs(p) => {
                     if args.verbose {
                         println!("[{}] pilot in logs  {} (id {})", clock(), p.name, p.id);
+                    }
+                    save(&args, &engine);
+                }
+                Event::PilotUpdated { id } => {
+                    if let (true, Some(p)) = (args.verbose, engine.pilots().get(&id)) {
+                        let named = |m: &Option<eve_chatterer_core::pilots::Membership>| m.as_ref().map_or("?".to_string(), |m| m.name.clone());
+                        println!("[{}] pilot  {}  corp: {}  alliance: {}", clock(), p.name, named(&p.corp), named(&p.alliance));
                     }
                     save(&args, &engine);
                 }

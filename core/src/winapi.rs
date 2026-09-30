@@ -5,7 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use windows::core::{BOOL, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -173,6 +174,21 @@ pub fn client_rect_of(h: HWND) -> Option<Rect> {
         let mut origin = POINT { x: 0, y: 0 };
         ClientToScreen(h, &mut origin).as_bool().then_some(())?;
         Some(Rect { left: origin.x, top: origin.y, right: origin.x + r.right, bottom: origin.y + r.bottom })
+    }
+}
+
+/// The scale factor (effective DPI / 96) of the monitor at a screen point:
+/// the same number Tauri reports for that monitor, but read straight from
+/// Windows, so it's safe to ask while holding a lock (Tauri's monitor
+/// queries wait on the UI thread).
+pub fn scale_at(x: i32, y: i32) -> f64 {
+    unsafe {
+        let m = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        let (mut dx, mut dy) = (0u32, 0u32);
+        match GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) {
+            Ok(()) if dx > 0 => f64::from(dx) / 96.0,
+            _ => 1.0,
+        }
     }
 }
 

@@ -102,15 +102,39 @@ fn lower(v: &[String]) -> Vec<String> {
     v.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect()
 }
 
+/// Compiles a tracked pattern exactly as matching uses it (case-insensitive).
+/// The one place that decides whether a pattern is valid: the settings
+/// screen checks new patterns through it too.
+pub fn compile_pattern(pattern: &str) -> Result<Regex, regex::Error> {
+    Regex::new(&format!("(?i){pattern}"))
+}
+
 impl CompiledRules {
+    /// Fails on the first pattern that doesn't compile.
     pub fn compile(r: &RuleSet) -> Result<CompiledRules, regex::Error> {
-        let regexes = r
-            .regexes
-            .iter()
-            .filter(|t| !t.text.trim().is_empty())
-            .map(|t| Regex::new(&format!("(?i){}", t.text)).map(|re| (t.text.clone(), re, t.even_when_muted)))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(CompiledRules {
+        let (rules, bad) = CompiledRules::compile_skipping_bad(r);
+        match bad.into_iter().next() {
+            Some((_, e)) => Err(e),
+            None => Ok(rules),
+        }
+    }
+
+    /// Compiles every pattern once, leaving out (and returning) the ones that
+    /// don't compile, so one bad entry never disables the rest.
+    pub fn compile_skipping_bad(r: &RuleSet) -> (CompiledRules, Vec<(String, regex::Error)>) {
+        let mut regexes = vec![];
+        let mut bad = vec![];
+        for t in r.regexes.iter().filter(|t| !t.text.trim().is_empty()) {
+            match compile_pattern(&t.text) {
+                Ok(re) => regexes.push((t.text.clone(), re, t.even_when_muted)),
+                Err(e) => bad.push((t.text.clone(), e)),
+            }
+        }
+        (CompiledRules::with_regexes(r, regexes), bad)
+    }
+
+    fn with_regexes(r: &RuleSet, regexes: Vec<(String, Regex, bool)>) -> CompiledRules {
+        CompiledRules {
             own_name: r.own_name,
             ignore_own: r.ignore_own_messages,
             ignore_system: r.ignore_system,
@@ -124,7 +148,7 @@ impl CompiledRules {
                 .map(|k| (k.text.trim().to_string(), k.text.trim().to_lowercase(), k.even_when_muted))
                 .collect(),
             regexes,
-        })
+        }
     }
 
     /// Lines that never alert whatever the mode: the pilot's own messages,
@@ -213,33 +237,33 @@ mod tests {
     #[test]
     fn own_name_matches_case_insensitively_and_ignores_own_messages() {
         let d = RuleSet::default;
-        assert_eq!(eval(d(), "Jarna", "Bob", "hey JARNA are you there"), Some(Reason::OwnName));
-        assert_eq!(eval(d(), "Jarna", "Bob", "nothing to see"), None);
-        assert_eq!(eval(d(), "Jarna", "Jarna", "I said my own name Jarna"), None);
-        assert_eq!(eval(RuleSet { ignore_own_messages: false, ..d() }, "Jarna", "Jarna", "Jarna"), Some(Reason::OwnName));
+        assert_eq!(eval(d(), "Holden", "Bob", "hey HOLDEN are you there"), Some(Reason::OwnName));
+        assert_eq!(eval(d(), "Holden", "Bob", "nothing to see"), None);
+        assert_eq!(eval(d(), "Holden", "Holden", "I said my own name Holden"), None);
+        assert_eq!(eval(RuleSet { ignore_own_messages: false, ..d() }, "Holden", "Holden", "Holden"), Some(Reason::OwnName));
     }
 
     #[test]
     fn login_motd_from_eve_system_never_alerts() {
-        let text = "Channel MOTD: contacts: Jarna, Psianna";
-        assert_eq!(eval(RuleSet::default(), "Jarna", "EVE System", text), None);
-        assert_eq!(eval(RuleSet { ignore_system: false, ..RuleSet::default() }, "Jarna", "EVE System", text), Some(Reason::OwnName));
+        let text = "Channel MOTD: contacts: Holden, Naomi";
+        assert_eq!(eval(RuleSet::default(), "Holden", "EVE System", text), None);
+        assert_eq!(eval(RuleSet { ignore_system: false, ..RuleSet::default() }, "Holden", "EVE System", text), Some(Reason::OwnName));
     }
 
     #[test]
     fn keywords_and_regexes() {
         let r = RuleSet { keywords: vec!["Jita".into(), " ".into()], regexes: vec![r"\bgank(ed|ing)?\b".into()], ..RuleSet::default() };
-        assert_eq!(eval(r.clone(), "Jarna", "X", "going to jita 4-4"), Some(Reason::Keyword("Jita".into())));
-        assert_eq!(eval(r.clone(), "Jarna", "X", "we got ganked"), Some(Reason::Regex(r"\bgank(ed|ing)?\b".into())));
-        assert_eq!(eval(r, "Jarna", "X", "gankster"), None);
+        assert_eq!(eval(r.clone(), "Holden", "X", "going to jita 4-4"), Some(Reason::Keyword("Jita".into())));
+        assert_eq!(eval(r.clone(), "Holden", "X", "we got ganked"), Some(Reason::Regex(r"\bgank(ed|ing)?\b".into())));
+        assert_eq!(eval(r, "Holden", "X", "gankster"), None);
     }
 
     #[test]
     fn ignored_senders_beat_always_senders_beat_content() {
         let r = RuleSet { ignore_senders: vec!["Spammer".into()], always_senders: vec!["Boss".into()], ..RuleSet::default() };
-        assert_eq!(eval(r.clone(), "Jarna", "Spammer", "hello Jarna"), None);
-        assert_eq!(eval(r.clone(), "Jarna", "Boss", "hi"), Some(Reason::AlwaysSender("Boss".into())));
-        assert_eq!(eval(r, "Jarna", "Bob", "Jarna?"), Some(Reason::OwnName));
+        assert_eq!(eval(r.clone(), "Holden", "Spammer", "hello Holden"), None);
+        assert_eq!(eval(r.clone(), "Holden", "Boss", "hi"), Some(Reason::AlwaysSender("Boss".into())));
+        assert_eq!(eval(r, "Holden", "Bob", "Holden?"), Some(Reason::OwnName));
     }
 
     #[test]
@@ -255,7 +279,7 @@ mod tests {
     }
 
     fn mode(rules: RuleSet, m: Mode, sender: &str, text: &str) -> Option<Reason> {
-        CompiledRules::compile(&rules).unwrap().evaluate_mode(&ctx("Jarna", "Fleet", sender, text), m)
+        CompiledRules::compile(&rules).unwrap().evaluate_mode(&ctx("Holden", "Fleet", sender, text), m)
     }
 
     #[test]
@@ -264,10 +288,10 @@ mod tests {
         // muting general chatter must not silence what was explicitly tracked
         // (owner correction 2026-09-27: tracking is independent of the mode).
         let r = || RuleSet { keywords: vec!["jita".into()], ..RuleSet::default() };
-        assert_eq!(mode(r(), Mode::Nothing, "Bob", "Jarna!"), None, "a plain mention still gets nothing");
+        assert_eq!(mode(r(), Mode::Nothing, "Bob", "Holden!"), None, "a plain mention still gets nothing");
         assert_eq!(mode(r(), Mode::Nothing, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
         assert_eq!(mode(r(), Mode::Mentions, "Bob", "hello there"), None);
-        assert_eq!(mode(r(), Mode::Mentions, "Bob", "Jarna?"), Some(Reason::OwnName));
+        assert_eq!(mode(r(), Mode::Mentions, "Bob", "Holden?"), Some(Reason::OwnName));
         assert_eq!(mode(r(), Mode::Mentions, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())));
         assert_eq!(mode(r(), Mode::Everything, "Bob", "hello"), Some(Reason::AlwaysChannel("Fleet".into())), "no tracked reason applies, so the generic one does");
         assert_eq!(mode(r(), Mode::Everything, "Bob", "selling in jita"), Some(Reason::Keyword("jita".into())), "a tracked reason is more specific than the generic one");
@@ -293,9 +317,9 @@ mod tests {
     #[test]
     fn everything_still_skips_own_system_and_ignored_lines() {
         let r = || RuleSet { ignore_senders: vec!["Spammer".into()], ..RuleSet::default() };
-        assert_eq!(mode(r(), Mode::Everything, "Jarna", "my own line"), None);
+        assert_eq!(mode(r(), Mode::Everything, "Holden", "my own line"), None);
         assert_eq!(mode(r(), Mode::Everything, "EVE System", "MOTD"), None);
         assert_eq!(mode(r(), Mode::Everything, "Spammer", "buy stuff"), None);
-        assert_eq!(mode(r(), Mode::Mentions, "Spammer", "Jarna"), None);
+        assert_eq!(mode(r(), Mode::Mentions, "Spammer", "Holden"), None);
     }
 }

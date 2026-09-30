@@ -108,6 +108,18 @@ b {
   animation: none;
 }
 
+/* Measurement only (EVE_CHATTERER_FX): switch single effects off to find
+   what the CPU while animating goes to. Never set in normal use. */
+:root[data-fx~="noshadow"] .glass {
+  box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge);
+}
+:root[data-fx~="noarrive"] .alert {
+  animation: none;
+}
+:root[data-fx~="nopulse"] .beacon::before {
+  animation: none;
+}
+
 @keyframes arrive {
   from {
     opacity: 0;
@@ -125,13 +137,16 @@ b {
 }
 @keyframes pulse {
   0% {
-    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 0 0 var(--glow), 0 6px 22px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transform: scale(0.97);
   }
   35% {
-    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 26px 2px var(--glow), 0 6px 22px rgba(0, 0, 0, 0.35);
+    opacity: 1;
+    transform: none;
   }
   100% {
-    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 0 0 0 var(--glow), 0 6px 22px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transform: none;
   }
 }
 .alert {
@@ -233,18 +248,44 @@ b {
   border-left: 4px solid var(--accent);
   --glow: color-mix(in srgb, var(--accent) 55%, transparent);
   padding: 12px 16px 12px 14px;
-  animation: arrive 240ms ease-out both, pulse 900ms ease-out 240ms 1;
+  animation: arrive 240ms ease-out both;
+  position: relative;
+  isolation: isolate;
+}
+/* The arrival glow. Drawn once on its own layer and only faded and scaled,
+   which the compositor does without repainting: animating the blurred
+   box-shadow itself re-rasterized it every frame and was ~75-80% of the
+   CPU while alerts animate (docs/FINDINGS.md #8). */
+.beacon::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 -4px; /* include the accent border */
+  z-index: -1;
+  pointer-events: none;
+  box-shadow: 0 0 26px 2px var(--glow);
+  opacity: 0;
+  will-change: opacity, transform;
+  animation: pulse 900ms ease-out 240ms 5;
 }
 .beacon .top {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 12px;
   font-size: 13px;
   color: var(--ink-dim);
 }
 .beacon .top .why {
   color: var(--accent);
   font-weight: 500;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.beacon .top .where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .beacon .sender {
   font-size: 20px;
@@ -295,7 +336,8 @@ b {
   gap: 0;
   padding: 8px;
   outline: 2px dashed color-mix(in srgb, var(--pilot) 75%, white);
-  outline-offset: 0;
+  /* Inside the box, so the dashed right edge is itself the resize grip. */
+  outline-offset: -2px;
   background: color-mix(in srgb, var(--pilot) 8%, transparent);
 }
 .reposition-preview {
@@ -327,26 +369,34 @@ b {
   color: var(--ink);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
+/* The resize grip is the box's dashed right edge itself (people reach for
+   the line, not for a handle inside it): a full-height strip centered on
+   it (8px either side; the window's 30px margin leaves room outside), so
+   wherever it's caught the pointer is on the line. Turns solid on hover. */
 .reposition-grip {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 0;
-  width: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  right: -8px;
+  width: 16px;
   cursor: ew-resize;
   border: none;
   background: none;
   padding: 0;
 }
-.reposition-grip::before {
+.reposition-grip::after {
   content: "";
-  width: 4px;
-  height: 60%;
-  border-radius: 2px;
-  background: var(--edge-hi);
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 8px;
+  width: 3px;
+  background: color-mix(in srgb, var(--pilot) 75%, white);
+  opacity: 0;
+}
+.reposition-grip:hover::after,
+.reposition-grip:active::after {
+  opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {

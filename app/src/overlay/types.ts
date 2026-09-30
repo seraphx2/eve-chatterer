@@ -11,6 +11,8 @@ export interface Alert {
   /** The pilot's accent color (CSS). */
   accent: string;
   channel: string;
+  /** The log's channel id; folds match on it since labels can repeat. */
+  channelId: string;
   sender: string;
   text: string;
   /** Plain-language reason, e.g. "Mentioned you". */
@@ -23,14 +25,11 @@ export interface Alert {
   stackUp: boolean;
 }
 
-export interface Fold {
-  pilot: string;
-  channel: string;
-}
-
 /** Mirrors `RepositionInfo` in src-tauri/src/overlay.rs. */
 export interface RepositionInfo {
   name: string;
   tag: string;
   accent: string;
+  /** The hotkey that ends reposition mode, e.g. "Ctrl+Alt+O". */
+  hotkey: string;
 }

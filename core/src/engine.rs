@@ -77,6 +77,9 @@ pub enum Event {
     NewPilot(Pilot),
     /// A pilot seen only in old logs, registered silently.
     PilotInLogs(Pilot),
+    /// Something shown about a known pilot changed (its corp or alliance):
+    /// save the registry.
+    PilotUpdated { id: String },
     /// A client window for this character has existed for a while but no chat
     /// log has appeared: "log chat to file" is probably off in EVE. Reported once.
     ChatLoggingOff { name: String },
@@ -189,7 +192,7 @@ impl Engine {
 
         let mut merged: Vec<MergedLine> = vec![];
         for ev in &poll.events {
-            let shared = ev.header.as_ref().is_some_and(|h| self.live.listeners_in_channel(&h.channel_id) > 1);
+            let shared = ev.header.as_ref().is_some_and(|h| self.live.listeners_in_channel(h) > 1);
             merged.extend(self.merger.push(ev, now, shared));
         }
         merged.extend(self.merger.flush(now));
@@ -243,14 +246,36 @@ impl Engine {
         for (id, channel_id, channel_name, kind) in known {
             self.pilots.note_channel(&id, &channel_id, &channel_name, kind, now);
         }
+
+        // Each character's corp and alliance, named by EVE's instance line.
+        let memberships: Vec<(String, ChannelKind, String, Stamp)> = self
+            .live
+            .sessions()
+            .filter_map(|s| {
+                let h = s.header?;
+                let kind = classify(&h.channel_id, &h.channel_name);
+                if !matches!(kind, ChannelKind::Corp | ChannelKind::Alliance) {
+                    return None;
+                }
+                Some((s.char_id?.to_string(), kind, h.instance.clone()?, h.session_started.unwrap_or(Stamp(0))))
+            })
+            .collect();
+        let mut updated: Vec<String> = vec![];
+        for (id, kind, name, session) in memberships {
+            if self.pilots.note_membership(&id, kind, &name, session) && !updated.contains(&id) {
+                updated.push(id);
+            }
+        }
+        events.extend(updated.into_iter().map(|id| Event::PilotUpdated { id }));
     }
 
-    /// Evaluates the line for every character that saw it, each under its own
-    /// resolved settings for this channel.
+    /// Evaluates the line for every character it is due for (see
+    /// `MergedLine::evaluate_for`), each under its own resolved settings for
+    /// this channel.
     fn evaluate(&mut self, m: MergedLine) -> Option<Alert> {
         let kind = classify(&m.channel_id, &m.channel_name);
         let mut targets = vec![];
-        for l in &m.seen_by {
+        for l in &m.evaluate_for {
             let resolved = self.book.resolved(l.char_id.as_deref(), kind, &m.channel_id);
             let ctx = LineCtx { pilot_name: &l.name, channel_name: &m.channel_name, sender: &m.line.sender, text: &m.line.text };
             if let Some(reason) = resolved.rules.evaluate_mode(&ctx, resolved.mode) {
@@ -327,15 +352,15 @@ mod tests {
     #[test]
     fn end_to_end_own_name_mention_and_new_pilot_come_in_order() {
         let dir = tempfile::tempdir().unwrap();
-        let p = session(dir.path(), "Local", "1", "Jarna");
+        let p = session(dir.path(), "Local", "1", "Holden");
         let mut e = engine(dir.path(), Layer::default());
         let t0 = Instant::now();
 
         let first = e.tick(t0);
-        assert!(first.iter().any(|x| matches!(x, Event::PilotInLogs(p) if p.name == "Jarna")), "old session registers silently: {first:?}");
+        assert!(first.iter().any(|x| matches!(x, Event::PilotInLogs(p) if p.name == "Holden")), "old session registers silently: {first:?}");
         assert!(alerts(&first).is_empty());
 
-        append(&p, &line("2026.09.26 10:00:05", "Bob", "hey Jarna, got a minute?"));
+        append(&p, &line("2026.09.26 10:00:05", "Bob", "hey Holden, got a minute?"));
         let ev = e.tick(t0 + Duration::from_millis(500));
         let new_pos = ev.iter().position(|x| matches!(x, Event::NewPilot(_))).expect("first line makes the pilot live");
         let alert_pos = ev.iter().position(|x| matches!(x, Event::Alert(_))).expect("alert");
@@ -347,7 +372,7 @@ mod tests {
         assert_eq!(a.targets[0].pilot_id.as_deref(), Some("1"));
 
         // A second line does not announce the pilot again.
-        append(&p, &line("2026.09.26 10:00:09", "Bob", "Jarna?"));
+        append(&p, &line("2026.09.26 10:00:09", "Bob", "Holden?"));
         let ev = e.tick(t0 + Duration::from_secs(1));
         assert!(!ev.iter().any(|x| matches!(x, Event::NewPilot(_))));
         assert_eq!(alerts(&ev).len(), 1);
@@ -356,8 +381,8 @@ mod tests {
     #[test]
     fn two_characters_in_one_channel_produce_one_alert_listing_both() {
         let dir = tempfile::tempdir().unwrap();
-        let a = session(dir.path(), "Local", "1", "Jarna");
-        let b = session(dir.path(), "Local", "2", "Psianna Archeia");
+        let a = session(dir.path(), "Local", "1", "Holden");
+        let b = session(dir.path(), "Local", "2", "Naomi Nagata");
         let mut e = engine(dir.path(), keywords(&["jita"]));
         let t0 = Instant::now();
         e.tick(t0);
@@ -377,37 +402,92 @@ mod tests {
     #[test]
     fn own_name_targets_only_the_named_pilot_but_records_both_viewers() {
         let dir = tempfile::tempdir().unwrap();
-        let a = session(dir.path(), "Local", "1", "Jarna");
-        let b = session(dir.path(), "Local", "2", "Psianna Archeia");
+        let a = session(dir.path(), "Local", "1", "Holden");
+        let b = session(dir.path(), "Local", "2", "Naomi Nagata");
         let mut e = engine(dir.path(), Layer::default());
         let t0 = Instant::now();
         e.tick(t0);
-        append(&a, &line("2026.09.26 10:00:05", "Bob", "Jarna, look here"));
-        append(&b, &line("2026.09.26 10:00:05", "Bob", "Jarna, look here"));
+        append(&a, &line("2026.09.26 10:00:05", "Bob", "Holden, look here"));
+        append(&b, &line("2026.09.26 10:00:05", "Bob", "Holden, look here"));
         e.tick(t0 + Duration::from_millis(500));
         let ev = e.tick(t0 + Duration::from_millis(1300));
         let got = alerts(&ev);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].targets.len(), 1);
-        assert_eq!(got[0].targets[0].pilot_name, "Jarna");
-        assert_eq!(got[0].seen_by.len(), 2, "the router needs this to know Psianna's screen showed it too");
+        assert_eq!(got[0].targets[0].pilot_name, "Holden");
+        assert_eq!(got[0].seen_by.len(), 2, "the router needs this to know Naomi's screen showed it too");
+    }
+
+    #[test]
+    fn a_log_folder_that_appears_after_startup_is_followed() {
+        // A new player turns on "Log chat to file" after the app started.
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("Chatlogs");
+        let mut e = engine(&dir, Layer::default());
+        let t0 = Instant::now();
+        assert!(e.tick(t0).is_empty(), "no folder: nothing to report, no error");
+        std::fs::create_dir(&dir).unwrap();
+        let p = session(&dir, "Local", "1", "Holden");
+        e.tick(t0 + Duration::from_secs(1));
+        append(&p, &line("2026.09.26 10:00:05", "Bob", "Holden?"));
+        let ev = e.tick(t0 + Duration::from_secs(2));
+        assert_eq!(alerts(&ev).len(), 1, "{ev:?}");
+    }
+
+    #[test]
+    fn a_mention_in_a_copy_that_arrives_after_the_hold_still_alerts_its_character() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = session(dir.path(), "Local", "1", "Holden");
+        let b = session(dir.path(), "Local", "2", "Naomi Nagata");
+        let mut e = engine(dir.path(), Layer::default());
+        let t0 = Instant::now();
+        e.tick(t0);
+        // Holden's copy goes out after the hold with nothing for Holden in it.
+        append(&a, &line("2026.09.26 10:00:05", "Bob", "Naomi Nagata, dock up"));
+        e.tick(t0 + Duration::from_millis(500));
+        assert!(alerts(&e.tick(t0 + Duration::from_millis(1300))).is_empty());
+        // Naomi's client wrote its copy late.
+        append(&b, &line("2026.09.26 10:00:06", "Bob", "Naomi Nagata, dock up"));
+        let ev = e.tick(t0 + Duration::from_millis(1800));
+        let got = alerts(&ev);
+        assert_eq!(got.len(), 1, "{ev:?}");
+        assert_eq!(got[0].targets.len(), 1);
+        assert_eq!((got[0].targets[0].pilot_name.as_str(), &got[0].targets[0].reason), ("Naomi Nagata", &Reason::OwnName));
+        assert_eq!(got[0].seen_by.len(), 2);
+    }
+
+    #[test]
+    fn a_characters_corp_is_learned_from_its_corp_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = session(dir.path(), "Corp", "1", "Holden");
+        append(&c, &line("2026.09.26 10:00:00", "EVE System", "Channel changed to Corp : Rocinante"));
+        let mut e = engine(dir.path(), Layer::default());
+        let t0 = Instant::now();
+        let ev = e.tick(t0);
+        assert!(ev.iter().any(|x| matches!(x, Event::PilotUpdated { id } if id == "1")), "{ev:?}");
+        assert_eq!(e.pilots().get("1").unwrap().corp.as_ref().unwrap().name, "Rocinante");
+        assert!(!e.tick(t0 + Duration::from_secs(1)).iter().any(|x| matches!(x, Event::PilotUpdated { .. })), "reported once");
+        // Moving corp mid-session.
+        append(&c, &line("2026.09.26 11:00:00", "EVE System", "Channel changed to Corp : Tycho Station"));
+        assert!(e.tick(t0 + Duration::from_secs(2)).iter().any(|x| matches!(x, Event::PilotUpdated { .. })));
+        assert_eq!(e.pilots().get("1").unwrap().corp.as_ref().unwrap().name, "Tycho Station");
     }
 
     #[test]
     fn login_motd_is_not_an_alert() {
         let dir = tempfile::tempdir().unwrap();
-        let a = session(dir.path(), "Corp", "1", "Jarna");
+        let a = session(dir.path(), "Corp", "1", "Holden");
         let mut e = engine(dir.path(), Layer::default());
         let t0 = Instant::now();
         e.tick(t0);
-        append(&a, &line("2026.09.26 10:00:05", "EVE System", "Channel MOTD: welcome Jarna"));
+        append(&a, &line("2026.09.26 10:00:05", "EVE System", "Channel MOTD: welcome Holden"));
         assert!(alerts(&e.tick(t0 + Duration::from_millis(500))).is_empty());
     }
 
     #[test]
     fn a_pilot_seen_only_in_old_logs_is_announced_when_it_first_speaks_live() {
         let dir = tempfile::tempdir().unwrap();
-        let p = session(dir.path(), "Local", "9", "Hinata Sunji");
+        let p = session(dir.path(), "Local", "9", "Chrisjen Avasarala");
         let mut e = engine(dir.path(), Layer::default());
         let t0 = Instant::now();
         assert!(e.tick(t0).iter().any(|x| matches!(x, Event::PilotInLogs(_))));
@@ -419,11 +499,11 @@ mod tests {
     #[test]
     fn a_pilots_public_channels_are_recorded_but_local_corp_fleet_and_private_are_not() {
         let dir = tempfile::tempdir().unwrap();
-        session(dir.path(), "Local", "1", "Jarna");
-        session(dir.path(), "Corp", "1", "Jarna");
-        session(dir.path(), "Fleet", "1", "Jarna");
-        session(dir.path(), "Private Chat (2)", "1", "Jarna");
-        session(dir.path(), "EVE University", "1", "Jarna");
+        session(dir.path(), "Local", "1", "Holden");
+        session(dir.path(), "Corp", "1", "Holden");
+        session(dir.path(), "Fleet", "1", "Holden");
+        session(dir.path(), "Private Chat (2)", "1", "Holden");
+        session(dir.path(), "EVE University", "1", "Holden");
         let mut e = engine(dir.path(), Layer::default());
         e.tick(Instant::now());
         let known = &e.pilots().get("1").unwrap().channels;
@@ -435,9 +515,9 @@ mod tests {
     #[test]
     fn the_kind_defaults_apply_every_private_and_fleet_line_but_only_matches_in_local() {
         let dir = tempfile::tempdir().unwrap();
-        let pm = session(dir.path(), "Private Chat (2)", "1", "Jarna");
-        let fleet = session(dir.path(), "Fleet", "1", "Jarna");
-        let local = session(dir.path(), "Local", "1", "Jarna");
+        let pm = session(dir.path(), "Private Chat (2)", "1", "Holden");
+        let fleet = session(dir.path(), "Fleet", "1", "Holden");
+        let local = session(dir.path(), "Local", "1", "Holden");
         let mut e = engine_with(dir.path(), Settings::with_defaults());
         let t0 = Instant::now();
         e.tick(t0);
@@ -457,10 +537,10 @@ mod tests {
     #[test]
     fn a_pilots_override_beats_the_kind_default_and_other_pilots_keep_it() {
         let dir = tempfile::tempdir().unwrap();
-        let a = session(dir.path(), "Private Chat (2)", "1", "Jarna");
-        let b = session(dir.path(), "Private Chat (2)", "2", "Psianna Archeia");
+        let a = session(dir.path(), "Private Chat (2)", "1", "Holden");
+        let b = session(dir.path(), "Private Chat (2)", "2", "Naomi Nagata");
         let mut settings = Settings::with_defaults();
-        // Psianna mutes private messages: her job is scouting, not chat.
+        // Naomi mutes private messages: her job is scouting, not chat.
         settings.pilots.entry("2".into()).or_default().kinds.insert(ChannelKind::Private, Layer { mode: Some(Mode::Nothing), ..Layer::default() });
         let mut e = engine_with(dir.path(), settings);
         let t0 = Instant::now();
@@ -472,18 +552,18 @@ mod tests {
         let got = alerts(&ev);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].targets.len(), 1);
-        assert_eq!(got[0].targets[0].pilot_name, "Jarna", "Psianna is muted, Jarna still gets it");
+        assert_eq!(got[0].targets[0].pilot_name, "Holden", "Naomi is muted, Holden still gets it");
         assert_eq!(got[0].seen_by.len(), 2);
     }
 
     #[test]
     fn resolved_caps_travel_on_the_target_and_edits_take_effect_at_once() {
         let dir = tempfile::tempdir().unwrap();
-        let p = session(dir.path(), "Local", "1", "Jarna");
+        let p = session(dir.path(), "Local", "1", "Holden");
         let mut e = engine_with(dir.path(), Settings::with_defaults());
         let t0 = Instant::now();
         e.tick(t0);
-        append(&p, &line("2026.09.26 10:00:05", "Bob", "Jarna?"));
+        append(&p, &line("2026.09.26 10:00:05", "Bob", "Holden?"));
         let ev = e.tick(t0 + Duration::from_millis(500));
         assert_eq!(alerts(&ev)[0].targets[0].prefs.caps.len(), 1, "Local's default cap");
 
@@ -491,7 +571,7 @@ mod tests {
         e.settings_mut().edit(|s| {
             s.pilots.entry("1".into()).or_default().base.rate_cap = Some(RateCap { per_minute: 2, over: OverCap::Drop });
         });
-        append(&p, &line("2026.09.26 10:00:09", "Bob", "Jarna again"));
+        append(&p, &line("2026.09.26 10:00:09", "Bob", "Holden again"));
         let ev = e.tick(t0 + Duration::from_secs(1));
         assert_eq!(alerts(&ev)[0].targets[0].prefs.caps.len(), 2, "the pilot's cap is now included");
     }
@@ -501,11 +581,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut e = engine(dir.path(), Layer::default());
         let t0 = Instant::now();
-        assert!(e.observe_clients(&["Jarna"], t0).is_empty());
-        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(60)).is_empty(), "still within the wait");
-        let ev = e.observe_clients(&["Jarna"], t0 + Duration::from_secs(91));
-        assert!(matches!(ev.as_slice(), [Event::ChatLoggingOff { name }] if name == "Jarna"));
-        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(200)).is_empty(), "reported only once");
+        assert!(e.observe_clients(&["Holden"], t0).is_empty());
+        assert!(e.observe_clients(&["Holden"], t0 + Duration::from_secs(60)).is_empty(), "still within the wait");
+        let ev = e.observe_clients(&["Holden"], t0 + Duration::from_secs(91));
+        assert!(matches!(ev.as_slice(), [Event::ChatLoggingOff { name }] if name == "Holden"));
+        assert!(e.observe_clients(&["Holden"], t0 + Duration::from_secs(200)).is_empty(), "reported only once");
     }
 
     #[test]
@@ -513,13 +593,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut e = engine(dir.path(), Layer::default());
         let t0 = Instant::now();
-        assert!(e.observe_clients(&["Jarna"], t0).is_empty());
-        session(dir.path(), "Local", "1", "Jarna");
+        assert!(e.observe_clients(&["Holden"], t0).is_empty());
+        session(dir.path(), "Local", "1", "Holden");
         let ev = e.tick(t0 + Duration::from_secs(1));
-        assert!(ev.iter().any(|x| matches!(x, Event::PilotInLogs(p) if p.name == "Jarna")));
+        assert!(ev.iter().any(|x| matches!(x, Event::PilotInLogs(p) if p.name == "Holden")));
         // Now the name resolves through the registry and the pilot goes live.
-        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(2)).iter().any(|x| matches!(x, Event::NewPilot(p) if p.id == "1")));
-        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(200)).is_empty());
+        assert!(e.observe_clients(&["Holden"], t0 + Duration::from_secs(2)).iter().any(|x| matches!(x, Event::NewPilot(p) if p.id == "1")));
+        assert!(e.observe_clients(&["Holden"], t0 + Duration::from_secs(200)).is_empty());
     }
 
     #[test]
@@ -527,17 +607,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut e = engine(dir.path(), Layer::default());
         let t0 = Instant::now();
-        e.observe_clients(&["Jarna"], t0);
+        e.observe_clients(&["Holden"], t0);
         e.observe_clients(&[], t0 + Duration::from_secs(60)); // window closed
         // Reopened later: the clock starts again rather than firing immediately.
-        assert!(e.observe_clients(&["Jarna"], t0 + Duration::from_secs(100)).is_empty());
+        assert!(e.observe_clients(&["Holden"], t0 + Duration::from_secs(100)).is_empty());
     }
 
     #[test]
     fn presence_can_mark_a_pilot_live() {
         let dir = tempfile::tempdir().unwrap();
         let mut e = engine(dir.path(), Layer::default());
-        assert!(matches!(e.mark_live("5", "Jarna"), Some(Event::NewPilot(_))));
-        assert!(e.mark_live("5", "Jarna").is_none());
+        assert!(matches!(e.mark_live("5", "Holden"), Some(Event::NewPilot(_))));
+        assert!(e.mark_live("5", "Holden").is_none());
     }
 }

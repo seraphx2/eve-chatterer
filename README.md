@@ -10,6 +10,12 @@ EVE Chatterer watches your EVE chat logs and tells you when something needs your
 
 It's a small app that sits in your system tray and stays out of the way.
 
+![An alert over the game: Amos Burton mentioned Holden in Local](docs/images/panel.png)
+
+![The same kind of alert as a Windows notification, with a Switch to button](docs/images/toasts.png)
+
+<sub>Concept images from the design mockups; the real alerts match them closely.</sub>
+
 ---
 
 ## Is it safe to use?
@@ -23,6 +29,8 @@ EVE Chatterer only **reads the chat log files** EVE writes to your Documents fol
 
 Its alerts are ordinary windows that sit over the game and can't be clicked or focused, so they never steal your mouse or keyboard.
 
+**Will it slow down my game?** No: your frame rate is the same with it running, and it uses about 7 MB of memory while waiting for chat. See [the measurements](PERFORMANCE.md).
+
 ---
 
 ## Getting started
@@ -35,7 +43,7 @@ Download **`EVE.Chatterer_…_x64-setup.exe`** from the [latest release](https:/
 - It starts with Windows from then on. You can turn that off in **Settings > General**.
 - It keeps itself up to date (see [Updates](#updates)).
 
-> Prefer not to install? Download the **portable** zip instead, unzip it anywhere and run `eve-chatterer-app.exe`. The portable copy works the same but won't update itself or start with Windows.
+> Prefer not to install? Download the **portable** zip instead, unzip it into a folder of its own (somewhere you can write to, like Documents) and run `eve-chatterer-app.exe`. It keeps its settings in a `data` folder right beside it, so you can move or copy the whole folder, and deleting it removes everything. The portable copy won't update itself, and starting with Windows is off until you turn it on in **Settings > General**.
 
 > Windows may say it "protected your PC" the first time, because the app isn't code-signed by a paid certificate. Click **More info > Run anyway**.
 
@@ -67,13 +75,21 @@ Each character's alerts appear over **its own EVE window**, inside the game area
 
 There are three styles, which you can choose per channel:
 
-- **Strip**: one compact line. Good for busy channels.
-- **Panel**: sender, message and why it alerted. The usual choice.
-- **Beacon**: larger and more noticeable, and it stays longer. Used for private messages by default.
+**Panel**: sender, message and why it alerted. The usual choice. The blue badge counts repeat lines folded into one alert.
+
+![Panel alerts](docs/images/panel.png)
+
+**Strip**: one compact line. Good for busy channels.
+
+![Strip alerts](docs/images/strip.png)
+
+**Beacon**: larger and more noticeable, and it stays longer. Used for private messages by default.
+
+![Beacon alerts](docs/images/beacon.png)
 
 ### Moving and resizing
 
-Press **Ctrl + Alt + O** while playing. A sample alert appears on the character you're looking at: drag it where you want it, and drag its edge to make it wider or narrower. Press **Ctrl + Alt + O** again to save. Each character remembers its own position, and **Settings > (character) > reset to default** puts it back.
+Press **Ctrl + Alt + O** while playing (you can change this hotkey in **Settings > General**). A sample alert appears on the character you're looking at: drag it where you want it, and drag its edge to make it wider or narrower. Press **Ctrl + Alt + O** again to save. Each character remembers its own position, and **Settings > (character) > reset to default** puts it back.
 
 ---
 
@@ -85,6 +101,8 @@ When you aren't in the game (you're in a browser, in Discord, or your EVE window
 - Notifications follow the overlay style: Strips go quickly, Panels stay a while, Beacons stay until you dismiss them. **A mention of your name always stays** until you deal with it.
 - Several lines from the same channel update one notification with a count, instead of stacking up.
 - They respect Windows **Do Not Disturb** and **Focus**, and anything you miss waits in Action Center.
+
+<img src="docs/images/actioncenter.png" alt="Missed alerts waiting in Action Center" width="400">
 
 ---
 

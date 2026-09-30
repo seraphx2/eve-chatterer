@@ -55,7 +55,15 @@ impl Tailer {
         if self.header.is_none() {
             self.header = logfmt::read_header(&mut f)?;
         }
-        Ok(read.lines.iter().filter_map(|l| logfmt::parse_line(l)).collect())
+        let lines: Vec<ChatLine> = read.lines.iter().filter_map(|l| logfmt::parse_line(l)).collect();
+        // The instance line arrives right after the header (possibly after we
+        // first read it) and again if it changes mid-session: keep the latest.
+        if let Some(h) = self.header.as_mut() {
+            if let Some(name) = lines.iter().rev().find_map(logfmt::channel_instance) {
+                h.instance = Some(name);
+            }
+        }
+        Ok(lines)
     }
 }
 
@@ -80,9 +88,9 @@ mod tests {
     #[test]
     fn adopting_at_end_skips_history_then_follows() {
         let dir = tempfile::tempdir().unwrap();
-        let p = new_log(dir.path(), "Local_20260926_210356_1.txt", &(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "old")));
+        let p = new_log(dir.path(), "Local_20260926_210356_1.txt", &(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "old")));
         let mut t = Tailer::open(&p, Start::End).unwrap();
-        assert_eq!(t.header().unwrap().listener, "Jarna");
+        assert_eq!(t.header().unwrap().listener, "Holden");
         assert!(t.poll().unwrap().is_empty(), "history must not replay");
         append(&p, &line("2026.09.27 01:00:05", "B", "new"));
         let got = t.poll().unwrap();
@@ -94,7 +102,7 @@ mod tests {
     #[test]
     fn a_new_session_replays_from_the_header() {
         let dir = tempfile::tempdir().unwrap();
-        let p = new_log(dir.path(), "Local_20260926_210356_1.txt", &(header("local", "Local", "Jarna") + &line("2026.09.27 01:00:00", "A", "first")));
+        let p = new_log(dir.path(), "Local_20260926_210356_1.txt", &(header("local", "Local", "Holden") + &line("2026.09.27 01:00:00", "A", "first")));
         let mut t = Tailer::open(&p, Start::Beginning).unwrap();
         let got = t.poll().unwrap();
         assert_eq!(got.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["first"]);
@@ -107,9 +115,9 @@ mod tests {
         std::fs::write(&p, [0xFF, 0xFE]).unwrap(); // just created, BOM only
         let mut t = Tailer::open(&p, Start::Beginning).unwrap();
         assert!(t.header().is_none());
-        append(&p, &header("local", "Local", "Jarna"));
+        append(&p, &header("local", "Local", "Holden"));
         assert!(t.poll().unwrap().is_empty());
-        assert_eq!(t.header().unwrap().listener, "Jarna");
+        assert_eq!(t.header().unwrap().listener, "Holden");
         let l = line("2026.09.27 01:00:00", "A", "hello");
         append(&p, &l[..l.len() - 4]); // no line ending yet
         assert!(t.poll().unwrap().is_empty());
@@ -120,7 +128,7 @@ mod tests {
     #[test]
     fn deleted_file_is_an_error_not_a_panic() {
         let dir = tempfile::tempdir().unwrap();
-        let p = new_log(dir.path(), "Local_20260926_210356_1.txt", &header("local", "Local", "Jarna"));
+        let p = new_log(dir.path(), "Local_20260926_210356_1.txt", &header("local", "Local", "Holden"));
         let mut t = Tailer::open(&p, Start::End).unwrap();
         std::fs::remove_file(&p).unwrap();
         assert_eq!(t.poll().unwrap_err().kind(), io::ErrorKind::NotFound);

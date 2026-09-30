@@ -1,60 +1,81 @@
 # Backlog
 
-## Overlay measurements still open
-- Frame-time impact on EVE (FINDINGS #9 only has GPU utilization): needs a present-level capture such as PresentMon, with both clients in a static scene so EVE's own load does not swamp the effect. Also whether an idle open window costs the compositor anything.
-- Idle RAM and CPU with 1 window versus 2 (single-monitor users).
-- CPU while animating is about a quarter of one core; check what dominates (likely WebView2 rendering the shadows) and whether the shadows, the arrival animation or the Beacon pulse can be made cheaper.
+Open work only. Finished items are removed (git history has them); decisions and measurements live in DESIGN.md and FINDINGS.md.
 
-## Before the overlay milestone (done: see FINDINGS #8 and #9)
-- Overlay behavior at non-100% DPI scaling and mixed-DPI monitors.
-- Verify `Create` events in `probe --no-poll` (open a new channel or log a character in).
-- Test OneDrive placeholder behavior safely (attribute check before opening; never hydrate files only to adopt them).
-- Spike the interactive WinRT toast (buttons, deep link into a pilot's settings) from the NSIS-installed build; needs an app user model id.
+## Code signing (owner decision 2026-09-29: Certum, after payday)
 
-## Overlay design (see DESIGN.md "Overlay styles")
-- Owner to confirm the default style mapping and the sizes/lifetimes; adjust `docs/design/alert-styles.html` and `StyleMap` defaults if they change.
-- Burst folding in the overlay manager: thresholds (for example more than N alerts in M seconds fold to a Strip stack), stack limit per monitor, ordering (Beacon on top).
-- Bundle Barlow with the app (the mockup loads it from Google Fonts).
-- Optional frosted glass through Windows acrylic on the overlay window; check its GPU cost over EVE first.
+Releases are unsigned today (the README covers SmartScreen's "Run anyway"). The plan, chosen over SignPath (acceptance favors established projects), Azure Trusted Signing (~$120/yr) and the Microsoft Store (MSIX, its own project):
 
-## Known channels never get pruned
-`Pilot.channels` (core/src/pilots.rs) is a cumulative, append-only record — once a character is seen in a public channel it stays listed on that character's Settings page forever, even after the channel closes and ages out of the live-tracking set entirely. No UI exists to remove one. Fine for a handful of channels; will clutter a character's Settings page over months of joining trade/recruitment channels. Options: a "remove" action per channel row (only when it has no override set, so removing it never silently discards a configured rule), and/or auto-drop entries not seen live in N days that also carry no override.
+- **Certificate:** Certum "Open Source Code Signing" in the **cloud** (SimplySign), about €58/yr, issued to the owner personally; also usable for dev-prompt (open source only). Signing builds SmartScreen reputation on the certificate, so the warning fades over time and stays gone for new releases; it doesn't disappear on day one.
+- **Runner:** SimplySign's login is interactive (phone one-time code), so the release job runs on the owner's PC as a self-hosted runner, **as the owner's own account**, started only for a release. Flow: owner logs into SimplySign, Claude starts the runner (`run.cmd`), merges dev into main, watches the release, stops the runner. A release merged with the runner off just waits queued. (Optional extra: a separate limited Windows account for the runner service; only if SimplySign's virtual card works from another account, which is unverified.)
+- **Protection:** fork PR workflows require approval for all outside contributors (set 2026-09-29), because PR runs use the PR's workflow files and could otherwise target the runner by label. Never approve a PR touching `.github/`.
+- **Build:** Tauri's `bundle.windows.signCommand` (signtool with the Certum cert) signs the app exe before bundling and the installer after, so the updater `.sig` is made from the signed installer. The job fails fast if the certificate isn't reachable (SimplySign logged out). Test with a draft release first. Only `release.yml` moves to the runner; CI stays on GitHub's machines.
 
-## Settings
-- More annoyance controls beyond the three shipped (mode, rate cap, sound): repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, away behavior, minimum priority. The layer structure already allows adding fields.
-- Settings UI: superseded by the finalized mockup (`docs/design/settings-screen.html`, see DESIGN.md "Settings screen") — a sidebar/tree (Characters > Defaults/each character, Audio, General, About), not a matrix, with a per-field deviation marker and revert control. Remaining work: wire it into `app/src/settings/Settings.svelte` and add the settings load/save Tauri commands.
-- Where the settings and pilot registry files live (proposal: `%APPDATA%\eve-chatterer\`), and migrating older files as fields are added.
-- Confirm the built-in kind defaults with the owner (private = everything as a Beacon; Local/Alliance capped at 6 per minute, public at 4, folding).
-- The overlay manager must honor `Outcome::Limited(Fold)` by incrementing the count badge of the alert that is already showing.
+## Chat feed: a running history of matched lines in each client
 
-## Overlay reposition (see DESIGN.md "Overlay reposition & resize")
-- The reposition hotkey (Ctrl+Alt+O) is fixed; make it configurable.
-- A saved position's vertical fraction is measured against the fixed `BOX_H`; alert stacks are placed from the same reference, so a box whose measured height differs lands a few pixels off. Harmless so far.
+Mockup: `docs/design/mini-feed.html`. Alerts pop up and vanish; the feed is what you glance at to catch up on what you missed.
 
-## Linux support (unresearched, general knowledge only — not measured like the Windows findings)
-- `paths.rs`'s Linux fallback (`$HOME/Documents`) is wrong for the real case: EVE has no native Linux client, so logs live inside a Wine/Proton prefix (e.g. `~/.local/share/Steam/steamapps/compatdata/<appid>/pfx/drive_c/users/steamuser/Documents/EVE/logs/Chatlogs`). Needs a real fix (search known compatdata paths, or ask the user) before Linux support means anything.
-- Presence/focus tracking: plausible on X11 via EWMH properties (same idea as the Windows implementation); no standard, portable way on Wayland for an unprivileged app to query the focused window — wlroots compositors (Sway, Hyprland) expose a protocol for it, GNOME/KDE largely don't. Directly affects focus-based suppression.
-- The overlay window (topmost, click-through, non-activating, exact placement): well-understood on X11 (override-redirect, what most Linux overlay tools use); Wayland compositors deliberately restrict this for arbitrary apps. Biggest risk to the app's core feature on Linux. Mitigating factor: EVE under Proton commonly renders via XWayland even in a Wayland session, so an X11-based approach might still reach the game window in practice — unverified.
-- Toasts (freedesktop D-Bus notification spec) and idle detection (systemd-logind D-Bus) are solid and arguably easier than Windows.
-- Before spending real engineering time: build a Linux probe (window enumeration, focus, a topmost/click-through window) on an actual box with EVE under Proton, the same rigor as the Windows probes in `tools/`, rather than trusting the analysis above.
+- **Look:** a small panel in a free corner of the EVE client, in the overlays' steel glass but more transparent and never animated. Strip-style rows (character tag, channel, sender, message cut to one line), newest at the bottom, the last ~6 lines. Older lines fade, the age sits on the right, a colored tick says why the line matched (amber mention, cyan keyword, blue always-alert), and the newest line is washed in the character's color for its first minute.
+- **Behavior:** owned by its client like the alerts: follows it, hides when it's minimized or on another desktop, click-through. Positioned per client with Ctrl+Alt+O.
+- **Settings:** Chat feed on/off, and Show: this character only / all characters (all: every character's lines, colored by character). A layered setting at the character level, not per channel: Defaults sets it and each character's page can override it, with the usual pip and use-default revert. For example on with all characters for the main, off for docked alts.
+
+## Localization: translating the app (owner request 2026-09-30)
+
+- **Languages:** EVE's own: English, German, French, Russian, Japanese, Chinese (Simplified), Korean, Spanish. After English, Russian, German and Chinese matter most by player numbers.
+- **Two places hold text, both need it:** the Svelte UI (Settings, overlay labels such as "Mentioned you") and the Rust side (notification text and buttons, `runner::reason_text`, tray menu, update and chat-logging messages).
+- **Approach:** extract every hard-coded string into translation keys as one piece of work (a few hundred, mostly Settings). Frontend via a build-time-checked library (Paraglide suits Svelte); Rust reads the same translation files so both sides stay in step. Language follows Windows' display language, with an override in Settings > General.
+- **Translations:** Claude drafts every language first (decent, not native; EVE jargon needs care), then a free open-source platform (Weblate or Crowdin) lets players correct them without touching code.
+- **Watch for:** longer strings (German) wrapping or cropping in Settings rows and overlays; Japanese/Chinese/Korean need system-font fallback since Barlow lacks those characters; plurals ("3 lines") and dates per language.
+- **Plan:** plumbing and extraction once, then ship English plus drafted Russian, German and Chinese; the rest follow as files.
+- Separate from reading non-English *logs* (Open questions below), which needs a real sample first.
+
+## Spoken alerts: Piper voices with a "ship computer" filter (owner request 2026-09-30)
+
+Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then filtered). Windows' built-in voices (David, Zira, Mark) work but sound robotic; the owner liked the filter's echo a lot and wants it paired with Piper's neural voices.
+
+- **Voice engine: Piper, downloaded on demand, never bundled.** When the user turns voices on, the app downloads the unmodified Piper release from Piper's own GitHub release, plus the chosen voice (about 60 MB each, from the rhasspy/piper-voices collection). Because users get Piper straight from its authors and we only run it as a separate program, our code stays MIT (owner decision 2026-09-30: stay MIT). Never compile Piper or espeak-ng into the app. Show where it comes from, and its license, in Settings.
+- **Licensing to verify before shipping:** the original rhasspy/piper (MIT) is archived and its successor (OHF-Voice/piper1-gpl) is GPL-3, partly because espeak-ng underneath is GPL. Decide which release to download. **Each voice has its own license** (some non-commercial only): offer only voices whose model card allows it, checked per voice, not from memory.
+- **Speed:** measured 0.6 s per short line starting Piper fresh each time (1.8 s for the first, loading the voice). Keep one Piper process running with the voice loaded and feed it lines (expected 0.1-0.3 s), stream its raw audio out instead of writing files, load the voice at startup so the first alert isn't the slow one, and play the channel-open chirp immediately to cover any delay.
+- **Filter (rodio), as in voicefx:** a radio band (high-pass ~380 Hz, low-pass ~3.2 kHz), a short two-note chirp before the voice, and two quiet close echoes (45 ms, 110 ms) for a hard metal room. Make the strength adjustable (off / subtle / full).
+- **What it says and when:** short and consistent, for example "Holden, mentioned in Local by Amos Burton" and optionally the message. It goes through the same audio player and rules as the alert sounds: volume, quiet time, one at a time, mentions cut through. Per channel it's another layered choice next to Sound: off, sound, or voice.
+- **Windows voices** stay available as a no-download fallback.
+- Candidate voices tried: Alan and Jenny (British), Amy and Lessac (American). Owner to pick favorites.
+
+## Away mode and webhooks: Discord and Slack (owner request 2026-09-29; build as one piece)
+
+**Why away matters:** today the app assumes you're watching whenever EVE is on screen. Stepped away (AFK mining, ratting, docked), two things go wrong: the focused character's alerts are suppressed entirely ("it can see its own chat"), and other characters' overlays vanish after seconds with no history. So a mention while you're away can be lost completely.
+
+- **Away detection:** no mouse or keyboard input for N minutes (`GetLastInputInfo`; the General page already shows the placeholder "Treat input idle for 5 minutes as away") means away. While away: nothing is suppressed for being focused, alerts go to Windows notifications instead of overlays (they wait in Action Center with Switch to), and sound can play. Any input ends it. `router::route` already takes an `away` input; nothing sets it yet (always false).
+- **Webhooks, Discord and Slack** (a couple of other EVE tools do Discord): while away, also post the alert to a Discord or Slack channel, so the phone app pings you. Both are "incoming webhooks": a secret URL taking a small JSON message. Only the message format (Discord embeds, Slack attachments/blocks) and rate limits differ.
+  - **Webhook manager:** one place (its own "Webhooks" Settings page) where you add webhooks by **name** plus URL, with a Send test button. The type is detected from the URL (`discord.com/api/webhooks/...` or `hooks.slack.com/services/...`); anything else is refused with a clear message. The names populate a dropdown used everywhere else, so one webhook is reused across characters and channels, and the dropdown doesn't care which service a name is.
+  - **Choosing where alerts go:** a "Webhook" dropdown (None or a named webhook) as a normal layered field: set it on Defaults, override per character, and per channel, like Style or Sound. Mentions are the obvious default to send; other channels opt in.
+  - **When:** only while away by default; possibly an "always" option.
+  - **Look:** shaped like our alerts on both services (Discord embed, Slack attachment with a colored edge): character name and accent color, "Sender in Channel", the message, the reason. One formatting function per service. Busy channels fold into one message with a count, which also keeps under the rate limits (Slack allows about 1 message/second per webhook).
+  - **The URL is a secret** (anyone with it can post): stored only in local settings, masked in the UI, never logged, never in the repo.
+  - **Later, same shape:** Microsoft Teams, and a generic JSON option for people's own tools.
+  - **Privacy:** this sends other players' chat off the PC. Clearly labeled opt-in; the README's "only talks to GitHub" statement must be updated. Some corps/alliances forbid relaying their chat outside the game, so the UI should make the per-channel choice deliberate.
+  - **Reliability:** retry on failure, respect both services' 429 rate-limit responses, never drop a mention silently.
 
 ## Open questions
+
+### Logs
+
 - Are chat log headers localized on non-English clients? Plan: read the header by position (channel id, name, listener, start time) with keys as a check; find a non-English sample.
-- Is the launcher-provided character selection ever visible without the log? (No: window title gives the name, the log gives the id.)
-- Tune the cross-character dedupe tolerance (start at +-2 s) against a busier hub capture.
+- Confirm the Alliance log starts with `EVE System > Channel changed to Alliance : <name>` like Corp does (FINDINGS #3); the corp/alliance display and the merge check assume it.
 
-## Features parked for later
-- **Opt-in "archive old logs"** (off by default): move logs older than N days that have had no writes for a long time into an `Archive` subfolder, never delete, never touch anything in the live set, skip anything that cannot be opened. Not needed for performance (the live set makes cost independent of file count); housekeeping only.
-- Idle detection (`GetLastInputInfo`) to switch to persistent toast + sound when the user is away. The old app had an idle-detector module.
-- Optional spoken alerts (Windows speech synthesis).
-- ESI name-to-id lookup was considered for pairing a window with a character id and rejected for now (network call, unnecessary since the log gives the pair).
-- Per-pilot accent colors and per-channel styles; live mini-feed/ticker of matched lines in a screen corner.
-- "Chat logging looks off" detection and toast.
+### Settings
 
-## Minor: unnecessary merge hold for Corp/Alliance across unrelated characters
-`core/src/merge.rs`'s "shared channel" check keys only on the header `channel_id`, which for Corp and Alliance is the literal string `corp`/`alliance` regardless of *which* corp or alliance. Two characters in different corporations both get treated as sharing a channel, so a corp alert pays the ~750ms merge hold for a duplicate that can never arrive. Found live-testing (2026-09-27): Jarna and Psianna are in different corps, Corp alerts still worked correctly, just delayed. Not a correctness bug (real corp-mates still merge fine; unrelated corps just never happen to match sender+text+timestamp). Fix: key "shared" on channel_id plus something that actually identifies the corp/alliance instance, if the log header exposes one (check a real header) — otherwise leave as is, since the cost is small and only Corp/Alliance are affected (Fleet ids and Local system are already unique per instance).
+- Owner to confirm the shipped defaults after living with them: the style per channel kind (private Beacon, Fleet/Corp/Alliance Panel), lifetimes, and rate caps (Local 6/min, public 4/min, Fleet/Corp/Alliance 6/min, folding).
+- More annoyance controls: repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, minimum priority. The layer structure already allows adding fields.
+- Known public channels are only removed by hand (the Remove action, which refuses while the channel has its own settings). Add automatic cleanup: drop entries not seen live in N days that carry no settings of their own.
 
-## Known nuisances to handle in code
-- Explorer shell windows steal foreground events (see FINDINGS #4).
-- `Task Switching` can be the last hook event; always confirm with `GetForegroundWindow()`.
-- Partial trailing lines while EVE is mid-write; file shrinking/truncation; deleted files.
+## Not planned: Linux (research notes, unmeasured)
+
+Windows only for now (CONTRIBUTING.md). Kept for reference if that changes:
+
+- `paths.rs`'s Linux fallback (`$HOME/Documents`) is wrong for the real case: EVE has no native Linux client, so logs live inside a Wine/Proton prefix (e.g. `~/.local/share/Steam/steamapps/compatdata/<appid>/pfx/drive_c/users/steamuser/Documents/EVE/logs/Chatlogs`).
+- Presence/focus: plausible on X11 via EWMH; no portable way on Wayland for an unprivileged app to query the focused window (wlroots compositors expose a protocol, GNOME/KDE largely don't).
+- Overlay window (topmost, click-through, non-activating): well understood on X11 (override-redirect); Wayland deliberately restricts it. EVE under Proton commonly renders via XWayland, so an X11 approach might still reach the game window; unverified.
+- Notifications (freedesktop D-Bus) and idle detection (logind) are solid.
+- Dependabot alert #1 (`glib` < 0.20, `VariantStrIter` unsoundness, RUSTSEC-2024-0429) is left open on purpose: glib comes only from Tauri's Linux GTK backend (Tauri pins gtk 0.18, so it can't be bumped until Tauri moves to gtk-rs 0.20) and never builds for Windows. If Linux is tried and dropped, dismiss it as "vulnerable code is not actually used"; if Linux ships, track it like dev-prompt does (its `docs/future-work.md` #17).
+- Before any real work: a Linux probe (window enumeration, focus, a topmost click-through window) on a real box with EVE under Proton, with the same rigor as the Windows probes in `tools/`.

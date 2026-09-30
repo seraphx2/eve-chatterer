@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat feed mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Same tokens as alert-styles.html, so the feed reads as part of that family. */
+  :root {
+    --page: #0c1116;
+    --page-ink: #c5d2da;
+    --page-dim: #7e939f;
+    --glass-top: rgba(70, 96, 110, .62);
+    --glass-bottom: rgba(24, 43, 51, .74);
+    --edge: rgba(190, 215, 228, .14);
+    --edge-hi: rgba(220, 238, 246, .22);
+    --strip: rgba(120, 155, 172, .16);
+    --ink: #dbe5ea;
+    --ink-dim: #93a8b4;
+    --ink-faint: #6f8795;
+    --mention: #e3a53a;
+    --keyword: #55c4d6;
+    --always: #6f9fe0;
+    --holden: #62d1a5;
+    --naomi: #a58af0;
+    --alex: #6cb6f0;
+    --font: "Barlow", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--page); }
+  body { margin: 0; padding: 40px 24px 72px; color: var(--page-ink); font: 400 16px/1.55 var(--font); }
+  main { max-width: 1040px; margin: 0 auto; }
+  h1 { font-weight: 300; font-size: 34px; line-height: 1.15; margin: 0 0 10px; color: #e8f0f4; }
+  h2 { font-weight: 500; font-size: 22px; margin: 0 0 4px; color: #e8f0f4; }
+  p { margin: 0; }
+  .lede, .when { max-width: 64ch; color: var(--page-dim); }
+  section { margin-top: 52px; }
+  .when { margin-bottom: 16px; }
+  figcaption { font-size: 14px; color: var(--page-dim); margin-top: 8px; max-width: 80ch; }
+
+  /* A slice of the EVE client behind the feed, at actual pixel size. */
+  .stage {
+    position: relative;
+    height: 470px;
+    overflow: hidden;
+    border: 1px solid #1a2630;
+    background:
+      radial-gradient(1px 1px at 12% 22%, #b9d2e0 60%, transparent 61%),
+      radial-gradient(1px 1px at 31% 71%, #8fb0c4 60%, transparent 61%),
+      radial-gradient(1.4px 1.4px at 47% 34%, #cfe2ee 60%, transparent 61%),
+      radial-gradient(1px 1px at 63% 82%, #9bb9cb 60%, transparent 61%),
+      radial-gradient(1px 1px at 78% 18%, #b9d2e0 60%, transparent 61%),
+      radial-gradient(1.4px 1.4px at 90% 58%, #cfe2ee 60%, transparent 61%),
+      radial-gradient(60% 90% at 20% 110%, rgba(38, 74, 104, .55), transparent 70%),
+      radial-gradient(50% 80% at 88% -10%, rgba(88, 62, 40, .35), transparent 70%),
+      linear-gradient(180deg, #0a1017, #101a24);
+  }
+  /* Stand-ins for EVE's own windows, so it's clear the feed sits in a free corner. */
+  .eve-ui {
+    position: absolute;
+    border: 1px solid rgba(160, 190, 205, .14);
+    background: rgba(18, 28, 36, .72);
+    font: 400 11px var(--font);
+    color: var(--ink-faint);
+    padding: 6px 8px;
+  }
+  .eve-ui.overview { right: 16px; top: 16px; width: 300px; height: 210px; }
+  .eve-ui.chat { left: 16px; top: 16px; width: 330px; height: 150px; }
+  .eve-ui.hud { left: 62%; translate: -50% 0; bottom: 12px; width: 240px; height: 70px; border-radius: 40px 40px 6px 6px; }
+
+  /* ---------- the feed ---------- */
+  .feed {
+    position: absolute;
+    width: 420px;
+    background: linear-gradient(165deg, var(--glass-top), var(--glass-bottom));
+    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 6px 22px rgba(0, 0, 0, .3);
+    color: var(--ink);
+  }
+  .feed.left { left: 16px; bottom: 16px; }
+  .feed.right { right: 16px; bottom: 16px; }
+  .feed header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 5px 10px; background: var(--strip);
+    font: 400 12px/1.2 var(--font); color: var(--ink-dim);
+    box-shadow: inset 0 -1px 0 var(--edge);
+  }
+  .feed header .who { color: var(--ink); font-weight: 500; }
+  .feed ol { list-style: none; margin: 0; padding: 2px 0; }
+  .feed li {
+    display: grid;
+    grid-template-columns: 26px 44px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    height: 26px;
+    padding-right: 10px;
+    border-left: 3px solid var(--pilot);
+    font-size: 13px;
+    font-weight: 300;
+  }
+  .feed li + li { margin-top: 1px; }
+  .feed .chip {
+    height: 100%; display: grid; place-items: center;
+    font: 600 12px var(--font); color: var(--pilot);
+    background: color-mix(in srgb, var(--pilot) 12%, transparent);
+  }
+  .feed .chan { color: var(--ink-dim); font-size: 11.5px; }
+  .feed .msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .feed .msg b { font-weight: 500; margin-right: 5px; }
+  .feed .age { color: var(--ink-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  /* Why it matched, as a colored tick before the sender (mention / keyword / always). */
+  .feed .msg b::before {
+    content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0;
+    background: var(--why, transparent); vertical-align: middle;
+  }
+  .feed li.mention { --why: var(--mention); }
+  .feed li.keyword { --why: var(--keyword); }
+  .feed li.always { --why: var(--always); }
+  /* Older lines fade; the newest is full strength. */
+  .feed li:nth-last-child(n+4) { opacity: .5; }
+  .feed li:nth-last-child(3) { opacity: .66; }
+  .feed li:nth-last-child(2) { opacity: .82; }
+  .feed li.new { background: color-mix(in srgb, var(--pilot) 7%, transparent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Chat feed</h1>
+  <p class="lede">A quiet, always-there history of the lines that matched, in a free corner of each EVE window. The pop-up alerts still grab your attention; the feed is what you glance at to see what you missed. It belongs to the client like the alerts do (follows it, hides with it, can't be clicked) and is placed with Ctrl+Alt+O. Concept only.</p>
+
+  <section>
+    <h2>One character's feed</h2>
+    <p class="when">The default: each client shows its own character's matched lines, newest at the bottom. Older lines fade, the age sits on the right, and a colored tick says why it matched (amber mention, cyan keyword, blue always-alert). The last 6 lines; nothing ever animates.</p>
+    <figure>
+      <div class="stage" data-shot="feed-single">
+        <div class="eve-ui chat">Local</div>
+        <div class="eve-ui overview">Overview</div>
+        <div class="eve-ui hud"></div>
+        <div class="feed left" style="--pilot: var(--holden)">
+          <header><span class="who">Holden</span><span>matched lines</span></header>
+          <ol>
+            <li class="keyword" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Local</span><span class="msg"><b>Fred Johnson</b>HyperNet offer: Zirnitra 4/8 cheap nodes</span><span class="age">14m</span></li>
+            <li class="always" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Corp</span><span class="msg"><b>Bobbie Draper</b>BPs need way more research time than I thought</span><span class="age">9m</span></li>
+            <li class="always" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Corp</span><span class="msg"><b>Alex Kamal</b>Anyone up for a mining op?</span><span class="age">6m</span></li>
+            <li class="keyword" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Fleet</span><span class="msg"><b>FC Drummer</b>Align to the gate. Primary is the Loki</span><span class="age">2m</span></li>
+            <li class="mention" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Local</span><span class="msg"><b>Amos Burton</b>Holden, are you on for the fleet tonight?</span><span class="age">1m</span></li>
+            <li class="mention new" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Private</span><span class="msg"><b>Naomi Nagata</b>Undock when you're ready</span><span class="age">now</span></li>
+          </ol>
+        </div>
+      </div>
+      <figcaption>Bottom left, clear of chat, the overview and the HUD. The newest line has a faint wash in the character's color until it's a minute old.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>All characters in one feed</h2>
+    <p class="when">An option for multiboxing: one feed on whichever client you're looking at, mixing every character's lines. The colored edge and tag say whose line it is.</p>
+    <figure>
+      <div class="stage" data-shot="feed-combined">
+        <div class="eve-ui chat">Local</div>
+        <div class="eve-ui overview">Overview</div>
+        <div class="eve-ui hud"></div>
+        <div class="feed right">
+          <header><span class="who">All characters</span><span>3 online</span></header>
+          <ol>
+            <li class="always" style="--pilot: var(--alex)"><span class="chip">AK</span><span class="chan">Corp</span><span class="msg"><b>Bobbie Draper</b>BPs need way more research time than I thought</span><span class="age">9m</span></li>
+            <li class="keyword" style="--pilot: var(--naomi)"><span class="chip">NN</span><span class="chan">Local</span><span class="msg"><b>Fred Johnson</b>HyperNet offer: Zirnitra 4/8 cheap nodes</span><span class="age">7m</span></li>
+            <li class="always" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Corp</span><span class="msg"><b>Alex Kamal</b>Anyone up for a mining op?</span><span class="age">6m</span></li>
+            <li class="keyword" style="--pilot: var(--naomi)"><span class="chip">NN</span><span class="chan">Fleet</span><span class="msg"><b>FC Drummer</b>Align to the gate. Primary is the Loki</span><span class="age">2m</span></li>
+            <li class="mention" style="--pilot: var(--holden)"><span class="chip">H</span><span class="chan">Local</span><span class="msg"><b>Amos Burton</b>Holden, are you on for the fleet tonight?</span><span class="age">1m</span></li>
+            <li class="mention new" style="--pilot: var(--alex)"><span class="chip">AK</span><span class="chan">Private</span><span class="msg"><b>Naomi Nagata</b>Undock when you're ready</span><span class="age">now</span></li>
+          </ol>
+        </div>
+      </div>
+      <figcaption>Bottom right this time, to show it goes wherever you drag it.</figcaption>
+    </figure>
+  </section>
+</main>
+</body>
+</html>

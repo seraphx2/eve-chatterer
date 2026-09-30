@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CHANNEL_KINDS, CHANNEL_KIND_LABEL, type ChannelKind, type Settings, type TrackedKind, type TrackedRule, baseLayerToEdit, peekBaseLayer } from "./model";
   import Dialog from "./Dialog.svelte";
+  import { checkRegex } from "./regexCheck";
 
   let {
     settings,
@@ -18,11 +19,28 @@
   // override or revert.
   const entries = $derived(peekBaseLayer(settings, pilotId)?.tracked ?? []);
 
+  // Patterns that don't compile (from an older version or a hand-edited
+  // file; the dialog refuses new ones), by text: matching skips them, so the
+  // chip says so.
+  let badPatterns = $state(new Map<string, string>());
+  $effect(() => {
+    const patterns = entries.filter((e) => e.kind === "regex").map((e) => e.text);
+    let current = true;
+    Promise.all(patterns.map(async (p) => [p, await checkRegex(p)] as const)).then((checked) => {
+      if (current) badPatterns = new Map(checked.filter((c): c is readonly [string, string] => c[1] !== null));
+    });
+    return () => {
+      current = false;
+    };
+  });
+
   function scopeLabel(entry: TrackedRule): string {
     return entry.onlyIn && entry.onlyIn.length > 0 ? entry.onlyIn.map((k) => CHANNEL_KIND_LABEL[k]).join(", ") : "";
   }
 
   function chipTitle(entry: TrackedRule): string {
+    const bad = entry.kind === "regex" ? badPatterns.get(entry.text) : undefined;
+    if (bad) return `This pattern doesn't work (${bad}), so it's skipped until it's fixed. Click it to edit.`;
     const scope = entry.onlyIn && entry.onlyIn.length > 0 ? `Only in: ${scopeLabel(entry)}` : "Applies to every channel";
     const muted = entry.evenWhenMuted ? "Still fires on a muted (“Nothing”) channel" : "Silent on a muted (“Nothing”) channel";
     return `${scope}\n${muted}`;
@@ -59,7 +77,9 @@
     dialogValue = "";
     dialogKind = "keyword";
     dialogScope = new Set();
-    dialogEvenWhenMuted = false;
+    // The default everywhere else too (core `TrackedRule`, the note above):
+    // a tracked term speaks up even on a muted channel unless told not to.
+    dialogEvenWhenMuted = true;
     dialogOpen = true;
   }
 
@@ -83,9 +103,34 @@
     dialogScope = next;
   }
 
-  function submitDialog() {
+  // A pattern is checked as it's typed; one that doesn't compile can't be saved.
+  let dialogError = $state<string | null>(null);
+  $effect(() => {
+    const text = dialogValue.trim();
+    if (!dialogOpen || dialogKind !== "regex" || !text) {
+      dialogError = null;
+      return;
+    }
+    let current = true;
+    checkRegex(text).then((e) => {
+      if (current) dialogError = e;
+    });
+    return () => {
+      current = false;
+    };
+  });
+
+  async function submitDialog() {
     const text = dialogValue.trim();
     if (!text) return;
+    // Not just `dialogError`: Enter or a click can come before the check
+    // answers. The Dialog closes itself on its button, so reopen it.
+    const problem = dialogKind === "regex" ? await checkRegex(text) : null;
+    if (problem !== null) {
+      dialogError = problem;
+      dialogOpen = true;
+      return;
+    }
     save({ text, kind: dialogKind, onlyIn: [...dialogScope], evenWhenMuted: dialogEvenWhenMuted }, editIndex);
     dialogOpen = false;
   }
@@ -114,7 +159,7 @@
   <div class="kind-row">
     <div class="kind-body" style="gap:14px; margin-top:0">
       {#each entries as entry, i (i)}
-        <span class="chip" class:regex-chip={entry.kind === "regex"} title={chipTitle(entry)}>
+        <span class="chip" class:regex-chip={entry.kind === "regex"} class:bad-chip={entry.kind === "regex" && badPatterns.has(entry.text)} title={chipTitle(entry)}>
           <button type="button" class="chip-text" onclick={() => openEdit(i, entry)}>
             {#if entry.kind === "regex"}<span class="regex-delim">/</span>{/if}{entry.text}{#if entry.kind === "regex"}<span
                 class="regex-delim">/</span
@@ -141,7 +186,7 @@
   bind:open={dialogOpen}
   title={editIndex !== null ? "Edit tracked entry" : "Add to Tracked"}
   confirmLabel={editIndex !== null ? "Save" : "Add"}
-  confirmDisabled={!dialogValue.trim()}
+  confirmDisabled={!dialogValue.trim() || (dialogKind === "regex" && dialogError !== null)}
   onconfirm={submitDialog}
 >
   <div class="segmented" style="margin-bottom:12px">
@@ -161,6 +206,9 @@
         title="Patterns are always matched case-insensitively">i</span
       >{/if}
   </div>
+  {#if dialogKind === "regex" && dialogError}
+    <p class="section-note error" style="margin:8px 0 0">This pattern doesn't work: {dialogError}</p>
+  {/if}
 
   <div class="dialog-field-label">Applies to</div>
   <div class="scope-picker">

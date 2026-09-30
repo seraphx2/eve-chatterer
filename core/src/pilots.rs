@@ -6,6 +6,7 @@
 //! create its config and tell the user (docs/DESIGN.md, "Pilots").
 
 use crate::channel::ChannelKind;
+use crate::store;
 use crate::time::Stamp;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -60,6 +61,23 @@ pub struct OverlayPlacement {
     /// Logical pixels; always within `[MIN_OVERLAY_WIDTH, MAX_OVERLAY_WIDTH]`
     /// on write (see `PilotRegistry::set_placement`).
     pub width: f64,
+    /// Where the alert stack's anchored edge sits, saved since 2026-09-30.
+    /// Alerts in the top half grow down from the box's top edge; in the lower
+    /// half they grow up from its bottom edge. Saving that edge itself (not
+    /// the box's top plus a fixed reference height) puts alerts exactly where
+    /// the box was, however tall it measured. `None` (older saves) places by
+    /// `fy` as before, until the character is repositioned again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<Edge>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Edge {
+    /// The bottom edge is anchored (the stack grows upward); else the top.
+    pub bottom: bool,
+    /// The edge's height in the region, as a fraction: 0 top, 1 bottom.
+    pub y: f64,
 }
 
 fn centered() -> f64 {
@@ -71,6 +89,9 @@ impl OverlayPlacement {
         self.width = self.width.clamp(MIN_OVERLAY_WIDTH, MAX_OVERLAY_WIDTH);
         self.fx = self.fx.clamp(0.0, 1.0);
         self.fy = self.fy.clamp(0.0, 1.0);
+        if let Some(e) = self.edge.as_mut() {
+            e.y = e.y.clamp(0.0, 1.0);
+        }
         self
     }
 }
@@ -100,6 +121,23 @@ pub struct Pilot {
     /// placement", same absent-means-inherit convention as `tag`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<OverlayPlacement>,
+    /// The corporation and alliance, as named in the latest Corp and Alliance
+    /// logs (logfmt::Header::instance). Shown in Settings; the merge check
+    /// reads the live logs directly. The alliance is kept even after leaving
+    /// one (EVE just stops writing an Alliance log), so a reader compares its
+    /// `session` with the corp's to tell whether it's current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corp: Option<Membership>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alliance: Option<Membership>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Membership {
+    pub name: String,
+    /// Unix seconds the log session naming it began (a new one each login).
+    pub session: i64,
 }
 
 impl Pilot {
@@ -143,7 +181,7 @@ impl PilotRegistry {
     pub fn observe(&mut self, id: &str, name: &str, live: bool, now: Stamp) -> Observation {
         match self.pilots.get_mut(id) {
             None => {
-                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None, placement: None };
+                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None, placement: None, corp: None, alliance: None };
                 self.pilots.insert(id.to_string(), p.clone());
                 if live {
                     Observation::NewLive(p)
@@ -195,6 +233,25 @@ impl PilotRegistry {
         }
     }
 
+    /// Records the corp or alliance a Corp/Alliance log names. A newer session
+    /// replaces an older one, and within one session the latest name wins (a
+    /// mid-session corp change). Returns whether anything changed, so the
+    /// caller only saves when needed.
+    pub fn note_membership(&mut self, id: &str, kind: ChannelKind, name: &str, session: Stamp) -> bool {
+        let Some(p) = self.pilots.get_mut(id) else { return false };
+        let slot = match kind {
+            ChannelKind::Corp => &mut p.corp,
+            ChannelKind::Alliance => &mut p.alliance,
+            _ => return false,
+        };
+        let fresh = Membership { name: name.to_string(), session: session.0 };
+        if slot.as_ref().is_some_and(|m| m.session > fresh.session || *m == fresh) {
+            return false;
+        }
+        *slot = Some(fresh);
+        true
+    }
+
     /// Forgets a channel outright — the UI only offers this when nothing is
     /// configured for it, so it never silently discards a rule.
     pub fn remove_channel(&mut self, id: &str, channel_id: &str) {
@@ -222,24 +279,23 @@ impl PilotRegistry {
         }
     }
 
-    /// A missing file is an empty registry (first run).
+    /// Reads a registry strictly and changes nothing on disk (the CLI's
+    /// `--pilots`). A missing file is an empty registry (first run).
     pub fn load(path: &Path) -> io::Result<PilotRegistry> {
-        match std::fs::read_to_string(path) {
-            Ok(s) => serde_json::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(PilotRegistry::default()),
-            Err(e) => Err(e),
-        }
+        Ok(store::load(path)?.unwrap_or_default())
     }
 
-    /// Writes to a temporary file and renames it over the target, so a crash
-    /// mid-write cannot leave a truncated registry.
+    /// Reads the app's registry. One that can't be read is kept aside and the
+    /// backup (or an empty registry) used instead; the second value is then a
+    /// problem to tell the user about (`store::open`).
+    pub fn open(path: &Path) -> (PilotRegistry, Option<String>) {
+        let o = store::open(path);
+        (o.value.unwrap_or_default(), o.problem)
+    }
+
+    /// Never leaves a partial file behind (`store::save`).
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self).map_err(io::Error::other)?)?;
-        std::fs::rename(&tmp, path)
+        store::save(path, self)
     }
 }
 
@@ -247,37 +303,52 @@ impl PilotRegistry {
 mod tests {
     use super::*;
 
+    #[test]
+    fn corp_and_alliance_follow_the_newest_log() {
+        let mut r = PilotRegistry::default();
+        r.observe("1", "Holden", true, Stamp(0));
+        assert!(r.note_membership("1", ChannelKind::Corp, "Rocinante", Stamp(100)));
+        assert!(!r.note_membership("1", ChannelKind::Corp, "Rocinante", Stamp(100)), "same thing again changes nothing");
+        assert!(!r.note_membership("1", ChannelKind::Corp, "Old Corp", Stamp(50)), "an older log never wins");
+        assert!(r.note_membership("1", ChannelKind::Corp, "Tycho Station", Stamp(100)), "a mid-session change does");
+        assert!(r.note_membership("1", ChannelKind::Alliance, "Outer Planets Alliance", Stamp(100)));
+        assert!(!r.note_membership("1", ChannelKind::Local, "Jita", Stamp(100)));
+        let p = r.get("1").unwrap();
+        assert_eq!(p.corp.as_ref().unwrap().name, "Tycho Station");
+        assert_eq!(p.alliance.as_ref().unwrap().name, "Outer Planets Alliance");
+    }
+
     const T: Stamp = Stamp(1_790_000_000);
 
     #[test]
     fn historic_then_live_notifies_once() {
         let mut r = PilotRegistry::default();
-        assert!(matches!(r.observe("1", "Hinata Sunji", false, T), Observation::NewHistoric(_)));
-        assert_eq!(r.observe("1", "Hinata Sunji", false, T), Observation::Known);
+        assert!(matches!(r.observe("1", "Chrisjen Avasarala", false, T), Observation::NewHistoric(_)));
+        assert_eq!(r.observe("1", "Chrisjen Avasarala", false, T), Observation::Known);
         // The old alt logs in for the first time: this is the moment to notify.
-        assert!(matches!(r.observe("1", "Hinata Sunji", true, T), Observation::NewLive(p) if p.live));
-        assert_eq!(r.observe("1", "Hinata Sunji", true, T), Observation::Known);
+        assert!(matches!(r.observe("1", "Chrisjen Avasarala", true, T), Observation::NewLive(p) if p.live));
+        assert_eq!(r.observe("1", "Chrisjen Avasarala", true, T), Observation::Known);
         assert_eq!(r.len(), 1);
     }
 
     #[test]
     fn a_brand_new_live_pilot_notifies_immediately() {
         let mut r = PilotRegistry::default();
-        assert!(matches!(r.observe("2", "Jarna", true, T), Observation::NewLive(_)));
+        assert!(matches!(r.observe("2", "Holden", true, T), Observation::NewLive(_)));
     }
 
     #[test]
     fn lookup_by_name_ignores_case() {
         let mut r = PilotRegistry::default();
-        r.observe("3", "Psianna Archeia", true, T);
-        assert_eq!(r.by_name("psianna archeia").unwrap().id, "3");
+        r.observe("3", "Naomi Nagata", true, T);
+        assert_eq!(r.by_name("naomi nagata").unwrap().id, "3");
         assert!(r.by_name("nobody").is_none());
     }
 
     #[test]
     fn known_channels_are_recorded_and_last_seen_is_bumped_every_time() {
         let mut r = PilotRegistry::default();
-        r.observe("1", "Jarna", true, T);
+        r.observe("1", "Holden", true, T);
         r.note_channel("1", "system_1_2", "EVE University", ChannelKind::Public, T);
         assert_eq!(r.get("1").unwrap().channels.len(), 1);
         let c = &r.get("1").unwrap().channels["system_1_2"];
@@ -301,7 +372,7 @@ mod tests {
     #[test]
     fn a_channel_can_be_removed() {
         let mut r = PilotRegistry::default();
-        r.observe("1", "Jarna", true, T);
+        r.observe("1", "Holden", true, T);
         r.note_channel("1", "system_1_2", "EVE University", ChannelKind::Public, T);
         r.remove_channel("1", "system_1_2");
         assert!(r.get("1").unwrap().channels.is_empty());
@@ -313,21 +384,21 @@ mod tests {
     #[test]
     fn display_tag_falls_back_to_initials_from_the_name_when_untagged() {
         let mut r = PilotRegistry::default();
-        r.observe("1", "Psianna Archeia", true, T);
-        assert_eq!(r.get("1").unwrap().display_tag(), "PA");
+        r.observe("1", "Naomi Nagata", true, T);
+        assert_eq!(r.get("1").unwrap().display_tag(), "NN");
     }
 
     #[test]
     fn initials_collapse_runs_of_whitespace_and_ignore_leading_and_trailing_spaces() {
-        assert_eq!(tag_from_name("  Psianna   Archeia  "), "PA");
-        assert_eq!(tag_from_name("Jarna"), "J");
+        assert_eq!(tag_from_name("  Naomi   Nagata  "), "NN");
+        assert_eq!(tag_from_name("Holden"), "H");
         assert_eq!(tag_from_name("   "), "");
     }
 
     #[test]
     fn a_pilots_own_tag_wins_over_the_derived_one() {
         let mut r = PilotRegistry::default();
-        r.observe("1", "Psianna Archeia", true, T);
+        r.observe("1", "Naomi Nagata", true, T);
         r.set_tag("1", Some("Psi"));
         assert_eq!(r.get("1").unwrap().display_tag(), "PSI");
     }
@@ -335,7 +406,7 @@ mod tests {
     #[test]
     fn tags_are_trimmed_capped_at_five_and_uppercased() {
         let mut r = PilotRegistry::default();
-        r.observe("1", "Jarna", true, T);
+        r.observe("1", "Holden", true, T);
         r.set_tag("1", Some("  nightstalker  "));
         assert_eq!(r.get("1").unwrap().tag.as_deref(), Some("NIGHT"));
 
@@ -347,11 +418,11 @@ mod tests {
     #[test]
     fn a_blank_tag_clears_back_to_the_derived_one_instead_of_storing_empty() {
         let mut r = PilotRegistry::default();
-        r.observe("1", "Jarna", true, T);
+        r.observe("1", "Holden", true, T);
         r.set_tag("1", Some("J-"));
         r.set_tag("1", Some("   "));
         assert_eq!(r.get("1").unwrap().tag, None);
-        assert_eq!(r.get("1").unwrap().display_tag(), "J");
+        assert_eq!(r.get("1").unwrap().display_tag(), "H");
         // An unknown pilot id is a no-op, not a panic.
         r.set_tag("nobody", Some("X"));
     }
@@ -359,21 +430,21 @@ mod tests {
     #[test]
     fn a_placement_can_be_set_cleared_and_is_clamped_to_the_readable_range() {
         let mut r = PilotRegistry::default();
-        r.observe("1", "Jarna", true, T);
+        r.observe("1", "Holden", true, T);
         assert_eq!(r.get("1").unwrap().placement, None);
 
-        r.set_placement("1", Some(OverlayPlacement { fx: 0.25, fy: 0.1, width: 5000.0 }));
+        r.set_placement("1", Some(OverlayPlacement { fx: 0.25, fy: 0.1, width: 5000.0, edge: None }));
         let p = r.get("1").unwrap().placement.unwrap();
         assert_eq!((p.fx, p.fy, p.width), (0.25, 0.1, MAX_OVERLAY_WIDTH));
 
-        r.set_placement("1", Some(OverlayPlacement { fx: -3.0, fy: 7.0, width: 1.0 }));
+        r.set_placement("1", Some(OverlayPlacement { fx: -3.0, fy: 7.0, width: 1.0, edge: None }));
         let p = r.get("1").unwrap().placement.unwrap();
         assert_eq!((p.fx, p.fy, p.width), (0.0, 1.0, MIN_OVERLAY_WIDTH));
 
         r.set_placement("1", None);
         assert_eq!(r.get("1").unwrap().placement, None);
         // An unknown pilot id is a no-op, not a panic.
-        r.set_placement("nobody", Some(OverlayPlacement { fx: 0.5, fy: 0.0, width: 400.0 }));
+        r.set_placement("nobody", Some(OverlayPlacement { fx: 0.5, fy: 0.0, width: 400.0, edge: None }));
     }
 
     #[test]
@@ -382,7 +453,7 @@ mod tests {
         let path = dir.path().join("sub").join("pilots.json");
         assert!(PilotRegistry::load(&path).unwrap().is_empty());
         let mut r = PilotRegistry::default();
-        r.observe("1", "Jarna", true, T);
+        r.observe("1", "Holden", true, T);
         r.note_channel("1", "system_1_2", "EVE University", ChannelKind::Public, T);
         r.save(&path).unwrap();
         let back = PilotRegistry::load(&path).unwrap();
@@ -395,14 +466,14 @@ mod tests {
     fn a_pilots_json_from_before_known_channels_existed_still_loads() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pilots.json");
-        std::fs::write(&path, r#"{"pilots":{"1":{"id":"1","name":"Jarna","live":true,"firstSeen":1}}}"#).unwrap();
+        std::fs::write(&path, r#"{"pilots":{"1":{"id":"1","name":"Holden","live":true,"firstSeen":1}}}"#).unwrap();
         let r = PilotRegistry::load(&path).unwrap();
         assert!(r.get("1").unwrap().channels.is_empty());
         // Same for `tag` and `placement`, both added later still: absent
         // entirely, not null, and `tag` still falls back to a derived one
         // correctly.
         assert_eq!(r.get("1").unwrap().tag, None);
-        assert_eq!(r.get("1").unwrap().display_tag(), "J");
+        assert_eq!(r.get("1").unwrap().display_tag(), "H");
         assert_eq!(r.get("1").unwrap().placement, None);
     }
 }

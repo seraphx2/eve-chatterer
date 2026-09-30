@@ -86,6 +86,13 @@ export interface Settings {
   pilots: Record<string, PilotSettings>;
   /** Which sound plays (core/src/audio.rs). Always present: Rust fills in its defaults. */
   audio: AudioSettings;
+  /** App-wide General page options (core/src/settings.rs `GeneralSettings`). */
+  general: GeneralSettings;
+}
+
+export interface GeneralSettings {
+  /** Toggles overlay reposition mode. Changed only through `set_reposition_hotkey`, which registers it first. */
+  repositionHotkey: string;
 }
 
 export type AudioMode = "off" | "shared" | "per_character";
@@ -121,7 +128,7 @@ export function relativeTime(unixSeconds: number): string {
   return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 
-/** This character's saved overlay position/width, set by dragging it in reposition mode (Ctrl+Alt+O in-game). */
+/** This character's saved overlay position/width, set by dragging it in reposition mode (the reposition hotkey in-game, Ctrl+Alt+O by default). */
 export interface OverlayPlacement {
   monitorLeft: number;
   monitorTop: number;
@@ -140,6 +147,26 @@ export interface Pilot {
   tag?: string;
   /** Absent means "use the default centered placement". */
   placement?: OverlayPlacement;
+  /** As named in the latest Corp / Alliance logs (core/src/pilots.rs `Membership`). */
+  corp?: Membership;
+  alliance?: Membership;
+}
+
+export interface Membership {
+  name: string;
+  /** Unix seconds the log session naming it began (a new one each login). */
+  session: number;
+}
+
+/**
+ * The character's corp and alliance. EVE simply stops writing an Alliance log
+ * once a corp leaves its alliance, so the stored alliance only counts if it
+ * came from the same login as the corp (both logs start within moments).
+ */
+export function affiliation(p: Pilot): { corp?: string; alliance?: string } {
+  const corp = p.corp?.name;
+  const current = p.alliance && (!p.corp || p.alliance.session >= p.corp.session - 600);
+  return { corp, alliance: current ? p.alliance!.name : undefined };
 }
 
 export interface SettingsData {
