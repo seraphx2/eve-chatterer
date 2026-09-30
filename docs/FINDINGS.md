@@ -188,6 +188,15 @@ One PresentMon capture of `exefile.exe` while the conditions changed on a schedu
 - The focused client is unaffected: every condition within ~1 FPS, as are the two baselines; GPU time per frame 5.7-5.9 ms throughout.
 - An idle open overlay costs nothing on either client.
 - The unfocused client (EVE throttles it to ~24 FPS; ~19 ms of CPU per frame, so CPU-bound) dropped to ~17 FPS while the soak animated, below both baselines: the overlays' CPU work competes with an already starved client. The soak is far heavier than real use (real alerts animate for under 5 s), so in practice this is a brief dip on a background client; no change made.
+- These runs used `--selftest` / `--soak`, whose overlays have no owner. Owned overlays (the real path since 2026-09-30) are covered by #16 for input, not for frame times.
+
+## 16. Owned overlays while the app's UI thread is frozen (2026-09-30, `--freezetest`, debug build)
+
+The question (docs/CODE-REVIEW.md H6): an overlay owned by an EVE client's window is a cross-process owner/owned relationship, and Windows attaches the input queues of the two threads for those. If it did here, EVE's input would stall whenever the app's UI thread stops pumping messages.
+
+Run: two clients on screen, both with owned overlays in every alert round (the log shows `alerts over 2 on-screen client(s)` for all 15 rounds). The app's UI thread was blocked for 5.0 s three times, at 30, 60 and 90 s, each announced in game (a Beacon 3 s ahead, a chime at the start, two at the end). The owner moved the camera and typed in chat during each freeze, and undocked in Jita during the run.
+
+Result: no hitch in camera movement or typing during any freeze; the stutter undocking in Jita was EVE's usual. A blocked UI thread in the app does not stall EVE's input while its owned overlays are click-through. Not covered: frame times (no PresentMon capture this run), and reposition mode, where the overlays take the mouse.
 
 ## Corrections log (things believed early that were wrong)
 
@@ -207,3 +216,4 @@ One PresentMon capture of `exefile.exe` while the conditions changed on a schedu
 - Localized (non-English) log headers.
 - Release-build CPU and a long soak test.
 - Interactive Windows toast from an installed (NSIS) build, and clicking one after the app has quit (#12 covered the running dev build only).
+- A frozen app UI thread during reposition mode, when owned overlays take the mouse (#16 covered click-through ones only), and frame times with owned overlays (#15 used unowned ones).

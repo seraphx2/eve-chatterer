@@ -6,23 +6,9 @@ Line numbers refer to that commit; function names are given so each spot can sti
 
 ## Plan (agreed with the owner 2026-09-30)
 
-- **Before the next release:** H1–H5, M1, M4 and M5 are fixed. What remains is the H6 measurement (`--freezetest`, needs the owner with EVE running) and the owner's check of the fixes with two clients.
+- **Before the next release:** H1–H5, M1, M4 and M5 are fixed, and the H6 measurement showed no problem (FINDINGS #16). What remains is the owner's check of the fixes with two clients.
 - **H4 decision (owner, 2026-09-30):** own-name mentions skip rate caps and don't count toward them.
 - **Everything else:** after the release.
-
-## High
-
-### H6. Cross-process owned overlays may tie our UI thread's input queue to EVE's (needs a measurement)
-
-- **Where:** `app/src-tauri/src/overlay.rs` (`platform::set_owner`), and DESIGN "Overlays belong to their EVE client".
-- **What:** making EVE's window the owner of our overlay creates a cross-process owner/owned relationship, and Windows then attaches the input queues of the two threads (Raymond Chen, "Is it legal to have a cross-process parent/child or owner/owned window relationship?", The Old New Thing). If that holds here, EVE's input on that client can stall whenever our UI thread stops pumping messages: a hang, WebView2 building a window (0.4 s cold), or any long piece of work on that thread. Keyboard and focus state are shared too.
-- **Gap:** FINDINGS #15 measured frame times with `--selftest` / `--soak`, whose overlays are created with `owner: None` (`testalerts.rs`). The owned path has never been measured.
-- **Measurement:** run the app with `--freezetest`, then switch to the desktop with the EVE clients.
-  1. Every 8 s it shows one alert of each style over every client on that desktop, owned by it like a real alert.
-  2. At 30, 60 and 90 s it blocks our UI thread for 5 s. A Beacon over each client warns 3 s ahead, one chime marks the start and two the end. Move the camera and type in EVE chat between the chimes.
-  3. Afterwards, `%TEMP%\eve-chatterer-freezetest.log` confirms how many clients had overlays at each round and gives wall-clock times, to compare frame times in a PresentMon capture run alongside.
-  4. Record the result in FINDINGS.
-- **First run (2026-09-30):** no stutter noticed, but inconclusive: the prompts were on the console on another virtual desktop, so the freezes weren't timed with camera movement, and no log recorded whether overlays were over the clients. The in-game cues and the log were added for that.
 
   If input does stall, the owner decides between keeping ownership (and guaranteeing the UI thread never blocks) and going back to topmost windows with our own z-order and cloak handling.
 
@@ -158,7 +144,7 @@ Line numbers refer to that commit; function names are given so each spot can sti
   - "regex behind an 'advanced' toggle" (Rules UX) was superseded by the String/Regex toggle.
 - **D8. The TypeScript placement type doesn't match Rust.** `OverlayPlacement` in `app/src/settings/model.ts` is `{monitorLeft, monitorTop, x, y, width}`; Rust's is `{fx, fy, width, edge?}`. It only works because nothing reads anything but `width`.
 - **D9. The overlay page's meter default differs from the docs.** `app/src/overlay/main.ts:13` falls back to "smooth" when the URL has no `meter`; the documented default is "stepped". Rust always passes the parameter, so only a bare dev load differs.
-- **D11. FINDINGS #8 describes the old window styles.** It records overlays as permanently `WS_EX_TOPMOST | WS_EX_LAYERED`. Since 2026-09-30 they are owned (not topmost while owned) and layered only while click-through (#14). Add a note rather than rewriting the measurement. FINDINGS #15 didn't cover owned overlays (H6).
+- **D11. FINDINGS #8 describes the old window styles.** It records overlays as permanently `WS_EX_TOPMOST | WS_EX_LAYERED`. Since 2026-09-30 they are owned (not topmost while owned) and layered only while click-through (#14). Add a note rather than rewriting the measurement.
 
 ## Dead code
 
