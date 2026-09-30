@@ -135,6 +135,7 @@ Modeled on Discord's in-game overlay: a hotkey (Ctrl+Alt+O by default, changeabl
 - **One window per character, not per monitor** (`overlay.rs`). Per-monitor windows were shared by every character on that monitor, so "this character's position" had no window to belong to.
 - **Only the focused client's character** is offered for positioning (every on-screen client when focus is elsewhere). Offering every known character stacked offline alts on top of each other.
 - **The placeholder is a real sample Panel** inside a dashed outline, so what is positioned is what an alert looks like at that width.
+- **The box belongs to the client, not to whoever an alert is for** (owner decision 2026-09-30): every alert drawn over a client uses that client's character's box, width and stack, including another character's alert shown there because that screen is the one being looked at. The alert itself still names the character it is for. With no client under it, the alerted character's own placement applies.
 - **Width only, per character, not per style**; clamped to 320-760 logical px (`pilots::MIN/MAX_OVERLAY_WIDTH`) for readability, not arbitrary limits.
 - **Drag and resize are ours, not the OS's.** The page reports pointer deltas; Rust moves the window. A native window drag looked and behaved like dragging a desktop window and could leave the game or the monitor.
 - **Constrained to the game's viewing area**: the client area (`winapi::client_rect_of`), excluding a windowed client's title bar and borders; the monitor for fullscreen.

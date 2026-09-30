@@ -165,6 +165,15 @@ Limit: `Activated` reaches only the process that sent the notification while it 
 
 Tried `window_vibrancy::apply_acrylic` on the overlay windows (the crate dev-prompt uses) with the `--selftest` alerts, Windows 11. Result: **no blur at all**, just a flat grey fill behind the whole window. Windows 11 draws acrylic only for the active window and falls back to a solid color otherwise, and overlays are deliberately never active (they must never take focus). The fill also covers the whole window, not just the alert boxes (fixable by clipping the window region, as dev-prompt does, but moot). The older undocumented accent-policy blur ignores activation but is known to lag while windows move and could break with any update. Decision: keep the CSS tinted glass; frosted glass dropped.
 
+## 14. Overlays at mixed DPI scaling (2026-09-30, release build, two clients)
+
+Left monitor at 150%, right at 100%, one client on each. Alerts on the 150% monitor render sharp and 1.5x larger in the right spot; repositioning (move, resize) there saves and restores correctly; a client moved to the other monitor gets its alerts at that monitor's scale. Geometry is computed per monitor (`scale_for`) and needed no change.
+
+Bugs found along the way (each only visible with two clients on screen, or after a resize), all fixed:
+- Every overlay page listened with Tauri's global `listen`, which hears events emitted to *any* window, so each overlay also drew the other client's alerts and reposition box. Pages now listen on their own window.
+- Keeping `WS_EX_LAYERED` on permanently (the 2026-09-30 click-through change, `platform::set_click_through`) made Windows hit-test the window at the size it had when it became layered: a box widened in reposition mode took the mouse only across its old width, the rest fell through to the game. Layered now toggles together with `WS_EX_TRANSPARENT`, as Tauri does.
+- An alert shown over another character's client used the alerted character's box and width, not that client's; now the client's (DESIGN, "The box belongs to the client").
+
 ## Corrections log (things believed early that were wrong)
 
 - "EVE's GPU rose by about 18 points while overlays animated" (first GPU run, 54% to 72%): not supported. The A/B runs showed EVE's own load varies by more than that with no overlay; the consistent effect is on dwm.exe and it comes from continuous animation.
@@ -181,6 +190,6 @@ Tried `window_vibrancy::apply_acrylic` on the overlay windows (the crate dev-pro
 
 - Fullscreen overlay on GPUs/drivers other than the owner's.
 - Localized (non-English) log headers.
-- Overlay rendering at different DPI scaling; overlay GPU/frame-time impact while EVE runs.
+- Overlay GPU/frame-time impact while EVE runs.
 - Release-build CPU and a long soak test.
 - Interactive Windows toast from an installed (NSIS) build, and clicking one after the app has quit (#12 covered the running dev build only).

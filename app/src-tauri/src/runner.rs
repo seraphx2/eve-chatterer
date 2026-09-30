@@ -303,6 +303,11 @@ impl Runner {
         }
     }
 
+    fn pilot_id_by_name(&self, name: &str) -> Option<String> {
+        let guard = self.engine.lock().unwrap();
+        guard.as_ref()?.pilots().by_name(name).map(|p| p.id.clone())
+    }
+
     fn deliver(&self, alert: &Alert, d: &Decision, snap: &Snapshot) {
         let state = self.app.state::<AppState>();
         match &d.outcome {
@@ -316,13 +321,24 @@ impl Runner {
                             };
                             println!("       showing {style:?} on monitor ({},{})-({},{})", monitor.left, monitor.top, monitor.right, monitor.bottom);
                             let (reason, tone) = reason_text(&d.reason);
-                            let saved = placement_for(&self.app, d.pilot_id.as_deref());
+                            // Position, width and window belong to the client the
+                            // alert is drawn over, whoever it is for: an alert for
+                            // Psianna shown on Ceryph's screen (the one being looked
+                            // at) lands in Ceryph's box, in Ceryph's stack (owner
+                            // decision 2026-09-30). The alerted pilot is still named
+                            // on the alert. No client under it: the alerted pilot's.
+                            let host = owner.and_then(|h| snap.clients.iter().find(|c| c.hwnd == h)).map(|c| c.character.clone());
+                            let (host_id, host_name) = match host {
+                                Some(name) => (self.pilot_id_by_name(&name), name),
+                                None => (d.pilot_id.clone(), d.pilot_name.clone()),
+                            };
+                            let saved = placement_for(&self.app, host_id.as_deref());
                             let width = saved.map(|p| p.width).unwrap_or(overlay::DEFAULT_OVERLAY_WIDTH);
                             // Relative to whatever region the router picked (the
                             // client window, or its monitor when fullscreen), so it
                             // always lands inside the game (overlay.rs, OverlayPlacement).
                             let custom_pos = saved;
-                            let key = overlay::overlay_key(d.pilot_id.as_deref(), &d.pilot_name);
+                            let key = overlay::overlay_key(host_id.as_deref(), &host_name);
                             state.overlays.show(
                                 &self.app,
                                 &key,

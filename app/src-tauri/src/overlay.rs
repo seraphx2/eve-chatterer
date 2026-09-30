@@ -763,7 +763,7 @@ mod platform {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, ShowWindowAsync, SW_HIDE, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_NOTOPMOST,
         HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
     };
 
     fn hwnd(window: &WebviewWindow) -> Option<HWND> {
@@ -824,11 +824,17 @@ mod platform {
     /// `WS_EX_NOACTIVATE`, and then `ShowWindow(SW_SHOW)`s the window. With
     /// that gone, grabbing the reposition box activated it, EVE stopped being
     /// the fullscreen foreground window, and Windows showed the taskbar.
+    ///
+    /// `WS_EX_LAYERED` goes with it, as Tauri does: Windows hit-tests a
+    /// layered window against the size it had when it became layered, so
+    /// leaving it on made a box widened in reposition mode take the mouse
+    /// only across its old width (the rest fell through to the game).
     pub fn set_click_through(window: &WebviewWindow, on: bool) {
         let Some(h) = hwnd(window) else { return };
         unsafe {
             let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
-            let ex = if on { ex | WS_EX_TRANSPARENT.0 as isize } else { ex & !(WS_EX_TRANSPARENT.0 as isize) };
+            let through = (WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0) as isize;
+            let ex = if on { ex | through } else { ex & !through };
             SetWindowLongPtrW(h, GWL_EXSTYLE, ex);
             let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS);
         }
