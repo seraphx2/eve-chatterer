@@ -41,12 +41,6 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
 - **Windows voices** stay available as a no-download fallback.
 - Candidate voices tried: Alan and Jenny (British), Amy and Lessac (American). Owner to pick favorites.
 
-## Settings
-
-- Owner to confirm the shipped defaults after living with them: the style per channel kind (private Beacon, Fleet/Corp/Alliance Panel), lifetimes, and rate caps (Local 6/min, public 4/min, Fleet/Corp/Alliance 6/min, folding).
-- More annoyance controls: repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, minimum priority. The layer structure already allows adding fields.
-- Known public channels are only removed by hand (the Remove action, which refuses while the channel has its own settings). Add automatic cleanup: drop entries not seen live in N days that carry no settings of their own.
-
 ## Away mode and webhooks: Discord and Slack (owner request 2026-09-29; build as one piece)
 
 **Why away matters:** today the app assumes you're watching whenever EVE is on screen. Stepped away (AFK mining, ratting, docked), two things go wrong: the focused character's alerts are suppressed entirely ("it can see its own chat"), and other characters' overlays vanish after seconds with no history. So a mention while you're away can be lost completely.
@@ -64,9 +58,16 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
 
 ## Open questions
 
+### Logs
+
 - Are chat log headers localized on non-English clients? Plan: read the header by position (channel id, name, listener, start time) with keys as a check; find a non-English sample.
 - Confirm the Alliance log starts with `EVE System > Channel changed to Alliance : <name>` like Corp does (FINDINGS #3); the corp/alliance display and the merge check assume it.
-- Tune the cross-character dedupe tolerance (start at ±2 s) against a busier hub capture.
+
+### Settings
+
+- Owner to confirm the shipped defaults after living with them: the style per channel kind (private Beacon, Fleet/Corp/Alliance Panel), lifetimes, and rate caps (Local 6/min, public 4/min, Fleet/Corp/Alliance 6/min, folding).
+- More annoyance controls: repeat suppression (same sender and text within N seconds), overlay lifetime and maximum stack, minimum priority. The layer structure already allows adding fields.
+- Known public channels are only removed by hand (the Remove action, which refuses while the channel has its own settings). Add automatic cleanup: drop entries not seen live in N days that carry no settings of their own.
 
 ## Not planned: Linux (research notes, unmeasured)
 
