@@ -72,7 +72,6 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
 ## Features
 
 - A live mini-feed/ticker of matched lines in a screen corner.
-- Opt-in "archive old logs" (off by default): move logs older than N days with no writes for a long time into an `Archive` subfolder; never delete, never touch the live set, skip anything that can't be opened. Housekeeping only (the live set makes cost independent of file count).
 
 ## Open questions
 
