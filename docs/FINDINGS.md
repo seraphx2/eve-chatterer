@@ -27,7 +27,9 @@ Everything here was measured on the project owner's machine (Windows 11, two 192
 | Real folder | 44 | 14 | 0 ms | 1.6 ms/s (0.2% of a core) |
 | Synthetic | 5,000 | 200 | 15 ms | 11.7 ms/s (1.2% of a core) |
 
-Cost scales with polled (character, channel) pairs, about 0.05 ms/s each, not with total file count. Not measured: OneDrive cloud-only placeholders (opening one may download it), release build, long soak.
+Cost scales with polled (character, channel) pairs, about 0.05 ms/s each, not with total file count. Not measured: release build, long soak.
+
+OneDrive cloud-only files are never downloaded by the app (2026-09-30, release build): seven logs made cloud-only with `attrib +U -P` (three the newest for their character and channel within the 14-day live window, so ones it would follow; four superseded) stayed cloud-only through startup and 40 s of rescans. Control: one direct read downloaded a file at once, so the check would have caught it. `liveset` reads the cloud flags (`OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS`) from the directory listing and never opens such a file. Restored afterwards (`attrib -U`, then `-P` to drop the pin).
 
 ## 3. Log format
 
@@ -178,7 +180,6 @@ Tried `window_vibrancy::apply_acrylic` on the overlay windows (the crate dev-pro
 ## Untested (verify before relying on)
 
 - Fullscreen overlay on GPUs/drivers other than the owner's.
-- OneDrive placeholder hydration when adopting old files.
 - Localized (non-English) log headers.
 - Overlay rendering at different DPI scaling; overlay GPU/frame-time impact while EVE runs.
 - Release-build CPU and a long soak test.
