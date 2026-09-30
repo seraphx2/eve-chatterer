@@ -2,6 +2,8 @@
 
 A modern EVE Online chat-log notifier: Rust core + Tauri v2 + Svelte, in-game WebView2 overlays, per-pilot settings. Read `docs/DESIGN.md` (decisions), `docs/FINDINGS.md` (measured facts, do not re-derive), and `docs/BACKLOG.md` before changing behavior.
 
+`docs/CODE-REVIEW.md` exists only while a code review has open findings. If it's there, read it before changing code it names, and remove each item as it's fixed. Delete the file once it's empty. A later review writes a new one in the same format: items ranked by severity, each with where, what goes wrong, and the fix.
+
 ## Rules
 - Poll the live log set (newest file per character id + channel, from filenames). Do not rely on `notify`/directory events for growth of live logs, and do not trust directory last-write times.
 - Decode logs as UTF-16LE explicitly; a BOM precedes every line; consume only complete lines; all timestamps are UTC.
