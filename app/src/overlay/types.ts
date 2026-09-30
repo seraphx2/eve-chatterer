@@ -35,4 +35,6 @@ export interface RepositionInfo {
   name: string;
   tag: string;
   accent: string;
+  /** The hotkey that ends reposition mode, e.g. "Ctrl+Alt+O". */
+  hotkey: string;
 }

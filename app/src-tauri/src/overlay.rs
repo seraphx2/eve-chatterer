@@ -89,6 +89,8 @@ pub struct RepositionInfo {
     pub name: String,
     pub tag: String,
     pub accent: String,
+    /// The hotkey that ends reposition mode, as set in Settings > General.
+    pub hotkey: String,
 }
 
 // Everything sent to an overlay page goes through the slot's queue until the
@@ -439,7 +441,12 @@ impl Overlays {
             let _ = slot.window.set_position(PhysicalPosition::new(x, y));
             platform::set_click_through(&slot.window, false);
             platform::show_without_activating(&slot.window);
-            deliver(app, &label, slot, Msg::RepositionEnter(RepositionInfo { name: t.name, tag: t.tag, accent: t.accent }));
+            deliver(app, &label, slot, Msg::RepositionEnter(RepositionInfo {
+                    name: t.name,
+                    tag: t.tag,
+                    accent: t.accent,
+                    hotkey: crate::hotkey::current_text().unwrap_or_else(|| eve_chatterer_core::settings::DEFAULT_REPOSITION_HOTKEY.to_string()),
+                }));
             self.sessions.lock().unwrap().insert(label, s);
         }
     }

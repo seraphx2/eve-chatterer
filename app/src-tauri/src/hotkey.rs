@@ -9,6 +9,13 @@ use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 static CURRENT: Mutex<Option<Shortcut>> = Mutex::new(None);
+/// The active combination as the user wrote it ("Ctrl+Alt+L"), for showing.
+static CURRENT_TEXT: Mutex<Option<String>> = Mutex::new(None);
+
+/// The active hotkey's text, for the reposition box's hint.
+pub fn current_text() -> Option<String> {
+    CURRENT_TEXT.lock().unwrap().clone()
+}
 
 pub fn parse(accel: &str) -> Result<Shortcut, String> {
     Shortcut::from_str(accel.trim()).map_err(|_| format!("\"{accel}\" isn't a key combination Windows understands."))
@@ -28,12 +35,14 @@ pub fn register_at_startup(app: &AppHandle, saved: &str) -> Option<String> {
     match first {
         Ok(s) => {
             *CURRENT.lock().unwrap() = Some(s);
+            *CURRENT_TEXT.lock().unwrap() = Some(saved.trim().to_string());
             None
         }
         Err(e) => {
             eprintln!("could not register the reposition hotkey {saved}: {e}");
             let fallback = (saved != default).then(|| parse(default).ok()).flatten().filter(|s| app.global_shortcut().register(*s).is_ok());
             *CURRENT.lock().unwrap() = fallback;
+            *CURRENT_TEXT.lock().unwrap() = fallback.map(|_| default.to_string());
             Some(match fallback {
                 Some(_) => format!("{saved} couldn't be used (another app may have it), so the reposition hotkey is {default} for now. Change it in Settings > General."),
                 None => format!("The reposition hotkey {saved} couldn't be set up (another app may have it). Pick another in Settings > General."),
@@ -57,6 +66,7 @@ pub fn change(app: &AppHandle, accel: &str) -> Result<(), String> {
         let _ = app.global_shortcut().unregister(old);
     }
     *CURRENT.lock().unwrap() = Some(new);
+    *CURRENT_TEXT.lock().unwrap() = Some(accel.trim().to_string());
     Ok(())
 }
 

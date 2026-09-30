@@ -128,7 +128,7 @@ export function relativeTime(unixSeconds: number): string {
   return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 
-/** This character's saved overlay position/width, set by dragging it in reposition mode (Ctrl+Alt+O in-game). */
+/** This character's saved overlay position/width, set by dragging it in reposition mode (the reposition hotkey in-game, Ctrl+Alt+O by default). */
 export interface OverlayPlacement {
   monitorLeft: number;
   monitorTop: number;

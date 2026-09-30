@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import Beacon from "./Beacon.svelte";
@@ -127,11 +126,15 @@
   onMount(() => {
     const unlisten: Array<() => void> = [];
     let disposed = false;
+    // The window's own listen, not the global `listen`: that hears events
+    // emitted to *any* window, so with two clients every overlay showed
+    // the other's alerts and reposition box too.
+    const win = getCurrentWebviewWindow();
     (async () => {
-      const un1 = await listen<Alert>("overlay:alert", (e) => add(e.payload));
-      const un2 = await listen<Fold>("overlay:fold", (e) => fold(e.payload));
-      const un3 = await listen<RepositionInfo>("overlay:reposition-enter", (e) => (reposition = e.payload));
-      const un4 = await listen("overlay:reposition-exit", () => (reposition = null));
+      const un1 = await win.listen<Alert>("overlay:alert", (e) => add(e.payload));
+      const un2 = await win.listen<Fold>("overlay:fold", (e) => fold(e.payload));
+      const un3 = await win.listen<RepositionInfo>("overlay:reposition-enter", (e) => (reposition = e.payload));
+      const un4 = await win.listen("overlay:reposition-exit", () => (reposition = null));
       if (disposed) {
         un1();
         un2();
@@ -165,7 +168,7 @@
   >
     <p class="reposition-hint">
       <span class="reposition-tag">{reposition.tag}</span>
-      {reposition.name} · drag to move, drag the right edge to resize · Ctrl+Alt+O when done
+      {reposition.name} · drag to move, drag the right edge to resize · {reposition.hotkey} when done
     </p>
     <div class="reposition-preview">
       <Panel alert={sample(reposition)} />
