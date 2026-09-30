@@ -29,6 +29,8 @@ EVE Chatterer only **reads the chat log files** EVE writes to your Documents fol
 
 Its alerts are ordinary windows that sit over the game and can't be clicked or focused, so they never steal your mouse or keyboard.
 
+**Will it slow down my game?** No: your frame rate is the same with it running, and it uses about 7 MB of memory while waiting for chat. See [the measurements](PERFORMANCE.md).
+
 ---
 
 ## Getting started

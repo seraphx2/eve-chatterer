@@ -110,7 +110,7 @@ GPU utilization from the `\GPU Engine(*)\Utilization Percentage` counters (must 
 | No overlay | 25.1% / 16.3% | 0 | (baseline) |
 
 - Continuous animation makes the desktop compositor recompose the region under a topmost window every frame: about +10 points of dwm.exe GPU. Stepping the meter removes that; the overlay's own rendering is negligible (under 2% of the GPU). Stepped is the default (`EVE_CHATTERER_METER=smooth|stepped|off` overrides it for measurement).
-- EVE's own GPU load swings by 10+ points on its own (54%, 75% and 67% baselines seen in different runs, a baseline stdev of 9.9), which is larger than any overlay effect we could resolve. **Frame time was not measured** (needs a present-level tool such as PresentMon); GPU utilization showed no consistent effect on EVE.
+- EVE's own GPU load swings by 10+ points on its own (54%, 75% and 67% baselines seen in different runs, a baseline stdev of 9.9), which is larger than any overlay effect we could resolve. GPU utilization showed no consistent effect on EVE; frame time was measured later (#15).
 - Whether overlay presence alone costs the compositor anything is unresolved (stepped/off vs no overlay was -2.6 and +7.3 points, inside the noise). A cleaner test needs both clients in a static scene.
 
 ## 10. Live verification of the full app against real chat (2026-09-27)
@@ -174,6 +174,21 @@ Bugs found along the way (each only visible with two clients on screen, or after
 - Keeping `WS_EX_LAYERED` on permanently (the 2026-09-30 click-through change, `platform::set_click_through`) made Windows hit-test the window at the size it had when it became layered: a box widened in reposition mode took the mouse only across its old width, the rest fell through to the game. Layered now toggles together with `WS_EX_TRANSPARENT`, as Tauri does.
 - An alert shown over another character's client used the alerted character's box and width, not that client's; now the client's (DESIGN, "The box belongs to the client").
 
+## 15. EVE frame times with overlays (2026-09-30, PresentMon 2.6, release build)
+
+One PresentMon capture of `exefile.exe` while the conditions changed on a schedule: app off, `--selftest` windows open and quiet, `--soak` animating (all three styles on both monitors every 8 s), app off again. Two docked clients in the hangar, one focused, no input.
+
+| Condition | Focused client: FPS / 1% low | Unfocused client: FPS / 1% low |
+|---|---|---|
+| Baseline 1, app off | 143.3 / 76.4 | 23.9 / 13.5 |
+| Overlays open, idle | 143.1 / 77.3 | 24.4 / 14.0 |
+| Overlays animating (soak) | 142.2 / 75.1 | 17.1 / 8.2 |
+| Baseline 2, app off | 142.0 / 75.3 | 21.1 / 10.9 |
+
+- The focused client is unaffected: every condition within ~1 FPS, as are the two baselines; GPU time per frame 5.7-5.9 ms throughout.
+- An idle open overlay costs nothing on either client.
+- The unfocused client (EVE throttles it to ~24 FPS; ~19 ms of CPU per frame, so CPU-bound) dropped to ~17 FPS while the soak animated, below both baselines: the overlays' CPU work competes with an already starved client. The soak is far heavier than real use (real alerts animate for under 5 s), so in practice this is a brief dip on a background client; no change made.
+
 ## Corrections log (things believed early that were wrong)
 
 - "EVE's GPU rose by about 18 points while overlays animated" (first GPU run, 54% to 72%): not supported. The A/B runs showed EVE's own load varies by more than that with no overlay; the consistent effect is on dwm.exe and it comes from continuous animation.
@@ -190,6 +205,5 @@ Bugs found along the way (each only visible with two clients on screen, or after
 
 - Fullscreen overlay on GPUs/drivers other than the owner's.
 - Localized (non-English) log headers.
-- Overlay GPU/frame-time impact while EVE runs.
 - Release-build CPU and a long soak test.
 - Interactive Windows toast from an installed (NSIS) build, and clicking one after the app has quit (#12 covered the running dev build only).

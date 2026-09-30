@@ -27,6 +27,9 @@ const SHOTS = {
   beacon: { page: "alert-styles.html", selector: "#beacon .stage" },
   toasts: { page: "windows-notification.html", selector: "#grid .toast", take: 2, pad: 10 },
   actioncenter: { page: "windows-notification.html", selector: ".center", pad: 10 },
+  "perf-fps": { page: "performance.html", selector: "#fps", pad: 0 },
+  "perf-memory": { page: "performance.html", selector: "#memory", pad: 0 },
+  "perf-cpu": { page: "performance.html", selector: "#cpu", pad: 0 },
 };
 const SCALE = 2;
 const VIEWPORT = { width: 1400, height: 1800 };

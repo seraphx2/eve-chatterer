@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Performance charts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* The player-facing performance charts for PERFORMANCE.md, rendered to
+     docs/images/perf-*.png by tools/scripts/readme-images.mjs. Numbers come
+     from docs/FINDINGS.md (#8, #15); update both together. */
+  :root {
+    --page: #0c1116;
+    --glass-top: rgba(70, 96, 110, .80);
+    --glass-bottom: rgba(24, 43, 51, .90);
+    --edge: rgba(190, 215, 228, .16);
+    --edge-hi: rgba(220, 238, 246, .26);
+    --ink: #dbe5ea;
+    --ink-dim: #93a8b4;
+    --off: #6b7f8a;
+    --on: #55c4d6;
+    --busy: #e3a53a;
+    --font: "Barlow", "Segoe UI", system-ui, sans-serif;
+  }
+  html { background: var(--page); }
+  body { margin: 0; padding: 32px; font: 400 15px/1.4 var(--font); color: var(--ink); display: grid; gap: 32px; justify-items: start; }
+  .chart {
+    width: 640px;
+    padding: 22px 26px 20px;
+    background: linear-gradient(165deg, var(--glass-top), var(--glass-bottom));
+    box-shadow: inset 0 1px 0 var(--edge-hi), inset 0 0 0 1px var(--edge), 0 6px 22px rgba(0, 0, 0, .35);
+  }
+  h2 { margin: 0; font-size: 20px; font-weight: 500; }
+  .sub { margin: 4px 0 18px; color: var(--ink-dim); font-size: 14px; }
+  .row { display: grid; grid-template-columns: 190px 1fr 92px; align-items: center; gap: 12px; margin: 10px 0; }
+  .label { font-size: 14px; }
+  .label small { display: block; color: var(--ink-dim); font-size: 12px; }
+  .track { height: 18px; background: rgba(255, 255, 255, .05); }
+  .bar { height: 100%; background: var(--c); }
+  .val { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .note { margin: 16px 0 0; color: var(--ink-dim); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- 1. FPS on the client you're playing (FINDINGS #15, focused client). Scale 0-150. -->
+<section class="chart" id="fps">
+  <h2>Your game's frame rate</h2>
+  <p class="sub">The EVE client you're playing, docked, average frames per second</p>
+  <div class="row"><span class="label">Without EVE Chatterer</span><div class="track"><div class="bar" style="--c: var(--off); width: 95.5%"></div></div><span class="val">143 FPS</span></div>
+  <div class="row"><span class="label">Running, alerts open<small>nothing moving</small></span><div class="track"><div class="bar" style="--c: var(--on); width: 95.4%"></div></div><span class="val">143 FPS</span></div>
+  <div class="row"><span class="label">Alerts animating<small>test flood, far busier than real chat</small></span><div class="track"><div class="bar" style="--c: var(--busy); width: 94.8%"></div></div><span class="val">142 FPS</span></div>
+  <p class="note">The difference is smaller than EVE's own run-to-run variation. Measured with PresentMon.</p>
+</section>
+
+<!-- 2. Memory (FINDINGS #8, private bytes of the whole process tree). Scale 0-250 MB. -->
+<section class="chart" id="memory">
+  <h2>Memory</h2>
+  <p class="sub">What EVE Chatterer uses, including its alert windows</p>
+  <div class="row"><span class="label">Waiting for chat<small>most of the time</small></span><div class="track"><div class="bar" style="--c: var(--off); width: 2.8%"></div></div><span class="val">7 MB</span></div>
+  <div class="row"><span class="label">Showing alerts<small>one game client</small></span><div class="track"><div class="bar" style="--c: var(--on); width: 59%"></div></div><span class="val">~150 MB</span></div>
+  <div class="row"><span class="label">Showing alerts<small>two game clients</small></span><div class="track"><div class="bar" style="--c: var(--busy); width: 84%"></div></div><span class="val">~210 MB</span></div>
+  <p class="note">Alert windows close about 45 seconds after the last alert, and the memory goes back.</p>
+</section>
+
+<!-- 3. CPU (FINDINGS #8, % of one core across the tree). Scale 0-10%. -->
+<section class="chart" id="cpu">
+  <h2>Processor</h2>
+  <p class="sub">Share of one CPU core</p>
+  <div class="row"><span class="label">Waiting for chat</span><div class="track"><div class="bar" style="--c: var(--off); width: 7%"></div></div><span class="val">under 1%</span></div>
+  <div class="row"><span class="label">Alert open, still</span><div class="track"><div class="bar" style="--c: var(--on); width: 10%"></div></div><span class="val">~1%</span></div>
+  <div class="row"><span class="label">Alerts animating<small>test flood, averaged</small></span><div class="track"><div class="bar" style="--c: var(--busy); width: 50%"></div></div><span class="val">~5%</span></div>
+  <p class="note">An alert animates for a few seconds when it arrives, then sits still.</p>
+</section>
+
+</body>
+</html>
