@@ -31,6 +31,7 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: read # the merged PR's "Release notes" section
 
 jobs:
   release:
@@ -103,6 +104,19 @@ jobs:
         shell: bash
         run: echo "value=$(node scripts/version.mjs)" >> "$GITHUB_OUTPUT"
 
+      # What changed (the merged PR's "## Release notes" section, else the
+      # commit subjects since the last release), then the install
+      # instructions. The app's update screen shows only the first part.
+      - name: Release notes
+        id: notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          delim="notes_$(date +%s%N)"
+          { echo "body<<$delim"; bash scripts/release-notes.sh "$VERSION" "$GITHUB_SHA"; echo "$delim"; } >> "$GITHUB_OUTPUT"
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
@@ -113,10 +127,7 @@ jobs:
           projectPath: app
           tagName: v${{ steps.version.outputs.value }}
           releaseName: EVE Chatterer v${{ steps.version.outputs.value }}
-          releaseBody: |
-            **Install:** download `EVE.Chatterer_${{ steps.version.outputs.value }}_x64-setup.exe` below and run it. It installs for your Windows user only (no admin needed), starts with Windows, and updates itself from then on.
-
-            **Portable:** or unzip `eve-chatterer_${{ steps.version.outputs.value }}_x64-portable.zip` anywhere and run it. The portable copy doesn't update itself.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: ${{ inputs.draft || false }}
           prerelease: ${{ inputs.prerelease || false }}
           uploadUpdaterJson: true
