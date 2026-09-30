@@ -148,6 +148,10 @@ Sent straight through WinRT (`ToastNotificationManager::CreateToastNotifierWithI
 
 Limit: `Activated` reaches only the process that sent the notification while it is running. A click after the app has quit does nothing unless the app is also registered as a COM activator for Windows to launch; not built or tested.
 
+## 13. Acrylic ("frosted glass") behind overlays doesn't work (2026-09-30)
+
+Tried `window_vibrancy::apply_acrylic` on the overlay windows (the crate dev-prompt uses) with the `--selftest` alerts, Windows 11. Result: **no blur at all**, just a flat grey fill behind the whole window. Windows 11 draws acrylic only for the active window and falls back to a solid color otherwise, and overlays are deliberately never active (they must never take focus). The fill also covers the whole window, not just the alert boxes (fixable by clipping the window region, as dev-prompt does, but moot). The older undocumented accent-policy blur ignores activation but is known to lag while windows move and could break with any update. Decision: keep the CSS tinted glass; frosted glass dropped.
+
 ## Corrections log (things believed early that were wrong)
 
 - "EVE's GPU rose by about 18 points while overlays animated" (first GPU run, 54% to 72%): not supported. The A/B runs showed EVE's own load varies by more than that with no overlay; the consistent effect is on dwm.exe and it comes from continuous animation.

@@ -50,10 +50,6 @@ Tried 2026-09-30 with `tools/src/bin/voicefx.rs` (plays a WAV as recorded, then 
 - OneDrive cloud-only placeholders: confirm the attribute check keeps the app from hydrating old files (also in FINDINGS' untested list).
 - Verify `Create` events in `probe --no-poll` (open a new channel or log a character in).
 
-## Overlays
-
-- Optional frosted glass through Windows acrylic on the overlay window; check its GPU cost over EVE first.
-
 ## Settings
 
 - Owner to confirm the shipped defaults after living with them: the style per channel kind (private Beacon, Fleet/Corp/Alliance Panel), lifetimes, and rate caps (Local 6/min, public 4/min, Fleet/Corp/Alliance 6/min, folding).
