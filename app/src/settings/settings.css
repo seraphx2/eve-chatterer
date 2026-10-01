@@ -812,6 +812,21 @@ button.btn.play {
 .update-status.error {
   color: var(--danger);
 }
+/* A character's Mute switch, and the page it locks while on. */
+.mute-toggle {
+  margin: 4px 0 6px;
+  font-size: 13.5px;
+}
+.mute-scope {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.mute-scope:disabled {
+  opacity: 0.45;
+}
+
 /* Rendered from the release's Markdown (releaseNotes.ts). */
 .update-notes {
   padding: 0 18px 14px;

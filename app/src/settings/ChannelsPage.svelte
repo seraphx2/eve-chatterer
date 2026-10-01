@@ -63,6 +63,24 @@
     }, 500);
   }
 
+  let muteBusy = $state(false);
+  let muteError = $state("");
+
+  // A pilots.json field, like the tag: saved at once, not through onedit.
+  async function setMuted(muted: boolean) {
+    if (!pilot) return;
+    muteBusy = true;
+    try {
+      await invoke("set_pilot_muted", { pilotId: pilot.id, muted });
+      pilot.muted = muted;
+      muteError = "";
+    } catch (e) {
+      muteError = String(e);
+    } finally {
+      muteBusy = false;
+    }
+  }
+
   function askToRemove(channelId: string, name: string) {
     removeTargetId = channelId;
     removeTargetName = name;
@@ -99,6 +117,21 @@
     <p class="pilot-org">{[org.corp, org.alliance].filter(Boolean).join(" · ")}</p>
   {/if}
   <p class="pilot-id">Character ID {pilotId}</p>
+  {#if pilot}
+    <label class="check mute-toggle">
+      <input type="checkbox" checked={!!pilot.muted} disabled={muteBusy} onchange={(e) => setMuted(e.currentTarget.checked)} />
+      Mute: no alerts about this character, on any client
+    </label>
+    {#if pilot.muted}
+      <p class="section-note">Nothing in {pilot.name}'s chat alerts you, whatever is set below. The settings are kept for when it's unmuted.</p>
+    {/if}
+    {#if muteError}<p class="section-note error">{muteError}</p>{/if}
+  {/if}
+{/if}
+
+<!-- Muted: everything below is kept but can't be changed. -->
+<fieldset class="mute-scope" disabled={!!pilot?.muted}>
+{#if pilotId !== null}
   <p class="lede">
     Untouched fields follow Defaults and stay in sync with it. A <span class="pip"></span>marks a field this character overrides, with a
     link to switch it back.
@@ -172,6 +205,8 @@
     {/if}
   </section>
 {/if}
+
+</fieldset>
 
 <Dialog bind:open={removeDialogOpen} title="Remove this channel?" confirmLabel="Remove" danger onconfirm={remove}>
   <p class="dialog-msg">Remove <span class="dialog-highlight">{removeTargetName}</span> from this list? It doesn't affect the channel in-game.</p>

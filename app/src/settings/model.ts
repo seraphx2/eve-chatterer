@@ -145,6 +145,8 @@ export interface Pilot {
   channels: Record<string, KnownChannel>;
   /** This character's own Strip-badge tag, if it has set one; absent means "derive one from the name". */
   tag?: string;
+  /** No alerts about this character on any client; its settings are kept. Absent means not muted. */
+  muted?: boolean;
   /** Absent means "use the default centered placement". */
   placement?: OverlayPlacement;
   /** As named in the latest Corp / Alliance logs (core/src/pilots.rs `Membership`). */

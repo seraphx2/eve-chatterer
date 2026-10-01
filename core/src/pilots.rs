@@ -121,6 +121,11 @@ pub struct Pilot {
     /// placement", same absent-means-inherit convention as `tag`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<OverlayPlacement>,
+    /// Muted: no alert about this character's chat, on any client, whatever
+    /// its settings say (they're kept for when it's unmuted). Its logs are
+    /// still followed, so it still shows as online and finds its channels.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
     /// The corporation and alliance, as named in the latest Corp and Alliance
     /// logs (logfmt::Header::instance). Shown in Settings; the merge check
     /// reads the live logs directly. The alliance is kept even after leaving
@@ -181,7 +186,7 @@ impl PilotRegistry {
     pub fn observe(&mut self, id: &str, name: &str, live: bool, now: Stamp) -> Observation {
         match self.pilots.get_mut(id) {
             None => {
-                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None, placement: None, corp: None, alliance: None };
+                let p = Pilot { id: id.to_string(), name: name.to_string(), live, first_seen: now.0, channels: BTreeMap::new(), tag: None, placement: None, muted: false, corp: None, alliance: None };
                 self.pilots.insert(id.to_string(), p.clone());
                 if live {
                     Observation::NewLive(p)
@@ -273,6 +278,18 @@ impl PilotRegistry {
     /// Sets (or, given `None`, clears) this pilot's saved overlay
     /// position/width, clamping the width first. A no-op for an unknown
     /// pilot id.
+    /// Mutes or unmutes a character. A no-op for an unknown pilot id.
+    pub fn set_muted(&mut self, id: &str, muted: bool) {
+        if let Some(p) = self.pilots.get_mut(id) {
+            p.muted = muted;
+        }
+    }
+
+    /// Whether alerts about this character are muted (unknown ids aren't).
+    pub fn is_muted(&self, id: &str) -> bool {
+        self.pilots.get(id).is_some_and(|p| p.muted)
+    }
+
     pub fn set_placement(&mut self, id: &str, placement: Option<OverlayPlacement>) {
         if let Some(p) = self.pilots.get_mut(id) {
             p.placement = placement.map(OverlayPlacement::clamped);

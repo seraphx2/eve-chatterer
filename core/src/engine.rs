@@ -271,11 +271,15 @@ impl Engine {
 
     /// Evaluates the line for every character it is due for (see
     /// `MergedLine::evaluate_for`), each under its own resolved settings for
-    /// this channel.
+    /// this channel. A muted character is skipped before anything else: no
+    /// rule of its own can alert about it.
     fn evaluate(&mut self, m: MergedLine) -> Option<Alert> {
         let kind = classify(&m.channel_id, &m.channel_name);
         let mut targets = vec![];
         for l in &m.evaluate_for {
+            if l.char_id.as_deref().is_some_and(|id| self.pilots.is_muted(id)) {
+                continue;
+            }
             let resolved = self.book.resolved(l.char_id.as_deref(), kind, &m.channel_id);
             let ctx = LineCtx { pilot_name: &l.name, channel_name: &m.channel_name, sender: &m.line.sender, text: &m.line.text };
             if let Some(reason) = resolved.rules.evaluate_mode(&ctx, resolved.mode) {
@@ -416,6 +420,31 @@ mod tests {
         assert_eq!(got[0].targets.len(), 1);
         assert_eq!(got[0].targets[0].pilot_name, "Holden");
         assert_eq!(got[0].seen_by.len(), 2, "the router needs this to know Naomi's screen showed it too");
+    }
+
+    #[test]
+    fn a_muted_character_never_alerts_and_the_others_still_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = session(dir.path(), "Local", "1", "Holden");
+        let b = session(dir.path(), "Local", "2", "Naomi Nagata");
+        let mut e = engine(dir.path(), keywords(&["jita"]));
+        let t0 = Instant::now();
+        e.tick(t0);
+        e.pilots_mut().set_muted("2", true);
+        // Both logs get the line; returns the targets of what came out.
+        let mut at = 0;
+        let mut say = |e: &mut Engine, stamp: &str, text: &str| {
+            append(&a, &line(stamp, "Bob", text));
+            append(&b, &line(stamp, "Bob", text));
+            at += 2000;
+            e.tick(t0 + Duration::from_millis(at));
+            let ev = e.tick(t0 + Duration::from_millis(at + 900));
+            alerts(&ev).iter().flat_map(|a| a.targets.iter().map(|t| t.pilot_name.clone())).collect::<Vec<_>>()
+        };
+        assert_eq!(say(&mut e, "2026.09.26 10:00:05", "selling in jita"), ["Holden"], "a keyword both match alerts only the unmuted one");
+        assert!(say(&mut e, "2026.09.26 10:00:07", "Naomi Nagata, dock up").is_empty(), "the muted character's mention never alerts");
+        e.pilots_mut().set_muted("2", false);
+        assert_eq!(say(&mut e, "2026.09.26 10:00:09", "Naomi Nagata?"), ["Naomi Nagata"], "unmuted, it alerts again");
     }
 
     #[test]

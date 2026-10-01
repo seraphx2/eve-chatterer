@@ -107,6 +107,15 @@ async fn set_pilot_tag(state: State<'_, AppState>, pilot_id: String, tag: String
     state::save_pilots(&engine)
 }
 
+/// Mutes or unmutes a character: muted, nothing about its chat alerts on any
+/// client, whatever its settings say. Its settings are left as they are.
+#[tauri::command]
+async fn set_pilot_muted(state: State<'_, AppState>, pilot_id: String, muted: bool) -> Result<(), String> {
+    let mut engine = state.engine.lock().unwrap();
+    engine.pilots_mut().set_muted(&pilot_id, muted);
+    state::save_pilots(&engine)
+}
+
 /// Clears a character's saved overlay position/width, so its alerts go back
 /// to the default centered placement. The settings screen's escape hatch for
 /// when a pin no longer makes sense (a monitor was removed, the window was
@@ -363,6 +372,7 @@ pub fn run() {
             check_regex,
             remove_known_channel,
             set_pilot_tag,
+            set_pilot_muted,
             clear_pilot_placement,
             reposition_gesture_start,
             reposition_move,
