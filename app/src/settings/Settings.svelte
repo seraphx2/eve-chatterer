@@ -166,7 +166,7 @@
               <span class="caret"></span>
               <span class="dot {isOnline(p.id) ? 'on' : 'off'}" title={isOnline(p.id) ? "Online now" : "Not running"}></span>
               <span class="label">{p.name}</span>
-              {#if p.muted}<span class="sub">muted</span>{:else if !p.live}<span class="sub">logs only</span>{/if}
+              {#if p.muted}<span class="sub muted-tag">muted</span>{:else if !p.live}<span class="sub">logs only</span>{/if}
             </button>
           {/each}
         </div>

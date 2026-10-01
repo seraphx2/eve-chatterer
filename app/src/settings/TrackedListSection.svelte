@@ -152,7 +152,7 @@
   Checked under every mode above, including "Nothing" by default — a muted channel can still show something you're watching for, unless
   that entry turns it off below. Applies everywhere unless scoped to specific channels.
   {#if pilotId !== null}
-    Everything tracked in Defaults applies here too; entries added here are on top of those, for this character only.
+    Everything tracked in <b class="defaults-ref">Defaults</b> applies here too; entries added here are on top of those, for this character only.
   {/if}
 </p>
 <section class="card">

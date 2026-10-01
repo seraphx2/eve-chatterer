@@ -120,10 +120,10 @@
   {#if pilot}
     <label class="check mute-toggle">
       <input type="checkbox" checked={!!pilot.muted} disabled={muteBusy} onchange={(e) => setMuted(e.currentTarget.checked)} />
-      Mute: no alerts about this character, on any client
+      <span><b class="mute-word">Mute</b> no alerts for this character, on any client</span>
     </label>
     {#if pilot.muted}
-      <p class="section-note">Nothing in {pilot.name}'s chat alerts you, whatever is set below. The settings are kept for when it's unmuted.</p>
+      <p class="section-note warning">Nothing from {pilot.name}'s chats will alert you, despite what is set below. The settings will be restored when it's unmuted.</p>
     {/if}
     {#if muteError}<p class="section-note error">{muteError}</p>{/if}
   {/if}
@@ -133,7 +133,7 @@
 <fieldset class="mute-scope" disabled={!!pilot?.muted}>
 {#if pilotId !== null}
   <p class="lede">
-    Untouched fields follow Defaults and stay in sync with it. A <span class="pip"></span>marks a field this character overrides, with a
+    Untouched fields follow <b class="defaults-ref">Defaults</b> and stay in sync with it. A <span class="pip"></span>marks a field this character overrides, with a
     link to switch it back.
   </p>
   {#if pilot}
@@ -183,7 +183,7 @@
 {#if pilotId !== null}
   <h2>Public channels</h2>
   <p class="section-note">
-    Newest first, discovered from this character's chat logs. Each channel initially starts out using the Defaults' Public channels
+    Newest first, discovered from this character's chat logs. Each channel initially starts out using the <b class="defaults-ref">Defaults</b>' Public channels
     settings. If you are no longer using a public channel, you can Remove the configuration to clean things up.
   </p>
   {#if removeError}<p class="section-note" style="color:var(--danger)">{removeError}</p>{/if}

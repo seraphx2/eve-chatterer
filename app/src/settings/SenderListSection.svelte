@@ -132,8 +132,8 @@
   A personal allow-list and block-list, by exact character name. Both override every other setting above, including a channel muted to
   "Nothing" - that's the entire point of "always."
   {#if isPilot}
-    Defaults' entries apply here too; set a name here to decide it differently for this character, including "Normal" to undo one of
-    Defaults' entries.
+    <b class="defaults-ref">Defaults</b>' entries apply here too; set a name here to decide it differently for this character, including "Normal" to undo one of
+    <b class="defaults-ref">Defaults</b>' entries.
     {#if hasOverrides}<button type="button" class="revert" onclick={revertAll}>↺ use default for all</button>{/if}
   {/if}
 </p>
@@ -146,7 +146,7 @@
           <span class="sender-glyph {v}">{v === "always" ? "✓" : v === "ignore" ? "⦸" : "○"}</span>
           <button type="button" class="chip-text" onclick={() => openEdit(entry)}>{entry.name}</button>
           {#if isPilot && entry.own === undefined}
-            <span class="chip-scope">· Defaults</span>
+            <span class="chip-scope">· <b class="defaults-ref">Defaults</b></span>
           {:else}
             <button
               type="button"
@@ -198,7 +198,7 @@
 >
   <p class="dialog-msg">
     {#if isPilot && removeTarget.inherited !== undefined}
-      Go back to Defaults' setting for <span class="dialog-highlight">{removeTarget.name}</span> ({removeTarget.inherited === "always"
+      Go back to <b class="defaults-ref">Defaults</b>' setting for <span class="dialog-highlight">{removeTarget.name}</span> ({removeTarget.inherited === "always"
         ? "always alert"
         : "ignored"})?
     {:else}

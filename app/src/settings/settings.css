@@ -816,12 +816,29 @@ button.btn.play {
 .mute-toggle {
   margin: 4px 0 6px;
   font-size: 13.5px;
+  color: var(--ink-dim);
+}
+.mute-toggle .mute-word {
+  font-weight: 600;
+  color: var(--ink);
+  margin-right: 4px;
 }
 .mute-scope {
   border: none;
   margin: 0;
   padding: 0;
   min-width: 0;
+}
+/* "Defaults" named in running text: it's a page, so it reads like one. */
+.defaults-ref {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Amber, the app's attention color (mentions use it too). */
+.section-note.warning,
+.row .sub.muted-tag {
+  color: var(--mention);
 }
 .mute-scope:disabled {
   opacity: 0.45;
