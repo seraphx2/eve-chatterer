@@ -80,7 +80,7 @@
     </div>
 
     <div class="field">
-      <span class="flabel">{#if showDeviation && own("suppression")}<span class="pip"></span>{/if}Suppress</span>
+      <span class="flabel">{#if showDeviation && own("suppression")}<span class="pip"></span>{/if}Suppress in client</span>
       <select
         value={resolved.suppression.value}
         onchange={(e) => set("suppression", e.currentTarget.value as Suppression)}
